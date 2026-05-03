@@ -7,7 +7,7 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 | Template | Signatory | Observer | Purpose |
 | --- | --- | --- | --- |
 | `VaultProposal` | `alreadySigned` | `allOperators` | Multi-party vault setup; each operator exercises `SignVault` until the set matches `allOperators`, then the choice returns the new `Vault` |
-| `Vault` | `operators` | `sigNetwork` | Per-deployment singleton; stores `evmVaultAddress`, `evmMpcPublicKey` (the **root** pubkey used to verify outcomes), `vaultId` |
+| `Vault` | `operators` | `sigNetwork` | Per-deployment singleton; stores `evmVaultAddress`, `evmMpcPublicKey` (the **response-verification** child pubkey, derived off-ledger from the MPC root + `(operatorsHash, "canton response key")`), `vaultId` |
 | `PendingDeposit` | `operators` | `requester, sigNetwork` | Single-use anchor archived in `ClaimDeposit` |
 | `PendingWithdrawal` | `operators` | `requester, sigNetwork` | Single-use anchor archived in `CompleteWithdrawal`; carries the original holding fields for refund-on-failure |
 | `Erc20Holding` | `operators` | `owner` | On-ledger ERC-20 balance. `sigNetwork` is intentionally **not** an observer — the MPC layer is decoupled from domain custody |
@@ -37,27 +37,16 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 `VaultProposal.SignVault` (controller `signer`): adds `signer` to `alreadySigned`. When the set matches `allOperators` (sort-equal — order-independent), returns `Right (ContractId Vault)`; otherwise `Left (ContractId VaultProposal)`.
 
-## Security invariants
-
-- `sigNetwork` is **not** an observer of `Erc20Holding`. Compromising the MPC participant cannot leak the domain ledger.
-- All four Pending* lifecycle templates are signed only by `operators` — `sigNetwork` cannot fabricate a pending claim.
-- `Vault` and `VaultProposal` reject any `evmVaultAddress` whose high 12 bytes are non-zero (`isAbiAddressSlot`). The same check applies to withdrawal `recipientAddress`. Prevents accidental dirty-padding which would change the recipient on EVM.
-- `RequestDeposit` requires `transfer(address,uint256)` with recipient = `evmVaultAddress` and exactly two ABI slots. Anything else aborts before signing.
-- `RequestWithdrawal` requires `transfer(address,uint256)` to the holding's token address with recipient = supplied `recipientAddress` and amount = `holding.amount` exactly.
-- `Erc20Holding` operators must equal `Vault` operators (sort-equal) on every withdrawal — prevents using a holding minted by a different operator set.
-- `ClaimDeposit` / `CompleteWithdrawal` archive the Pending* contract **before** any other validation, then verify the MPC signature on the outcome bytes before mutating state. Replay of the same `(pendingCid, evidence pair)` fails because the pending is already archived.
-- Per-vault key derivation: `path` always includes `vaultId`, so two vaults sharing the same operator set still derive distinct EVM keys (the Signer cannot enforce this on its own — see [`daml-signer/README.md` § Cross-operator-set isolation](../daml-signer/README.md#cross-operator-set-isolation)).
-
 ## Calldata shape (deposit + withdrawal)
 
 ```
-selector   = 0xa9059cbb                                  // transfer(address,uint256)
-slot 0     = recipient address, 20 bytes left-zero-padded to 32 bytes
-slot 1     = amount, 32-byte uint256
-total      = 4 + 32 + 32 = 68 bytes; no trailing bytes
+selector = 0xa9059cbb                                    // transfer(address,uint256)
+slot 0   = recipient address, 20 bytes left-zero-padded to 32 bytes
+slot 1   = amount, 32-byte uint256
+total    = 4 + 32 + 32 = 68 bytes; no trailing bytes
 ```
 
-Build it with viem:
+Build with viem:
 
 ```typescript
 import { encodeAbiParameters, parseAbiParameters } from "viem";
@@ -69,11 +58,21 @@ const args = encodeAbiParameters(
 const calldata = `a9059cbb${args}`;
 ```
 
+## Security invariants
+
+- `sigNetwork` is **not** an observer of `Erc20Holding`. Compromising the MPC participant cannot leak the domain ledger.
+- All four Pending\* lifecycle templates are signed only by `operators` — `sigNetwork` cannot fabricate a pending claim.
+- `Vault` and `VaultProposal` reject any `evmVaultAddress` whose high 12 bytes are non-zero (`isAbiAddressSlot`); same check on withdrawal `recipientAddress`. Prevents accidental dirty-padding from changing the recipient on EVM.
+- `RequestDeposit` requires `transfer(address,uint256)` with recipient = `evmVaultAddress` and exactly two ABI slots. Anything else aborts before signing.
+- `RequestWithdrawal` requires `transfer(address,uint256)` to the holding's token address with recipient = supplied `recipientAddress` and amount = `holding.amount` exactly.
+- `Erc20Holding` operators must equal `Vault` operators (sort-equal) on every withdrawal — prevents using a holding minted by a different operator set.
+- `ClaimDeposit` / `CompleteWithdrawal` archive the Pending\* contract **before** any other validation, then verify the MPC signature on the outcome bytes before mutating state. Replay of the same `(pendingCid, evidence pair)` fails because the pending is already archived.
+- Per-vault key derivation: `path` always includes `vaultId`, so two vaults sharing the same operator set still derive distinct EVM keys. The Signer cannot enforce this — it's the consumer's job, and `daml-vault` does it for you by always prefixing `path` with `vaultId`.
+
 ## Usage
 
-`daml.yaml`:
-
 ```yaml
+# daml.yaml
 data-dependencies:
   - ../daml-vault/.daml/dist/daml-vault-0.0.1.dar
   - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
@@ -82,8 +81,6 @@ data-dependencies:
 build-options:
   - -Wno-crypto-text-is-alpha
 ```
-
-Imports:
 
 ```daml
 import Erc20Vault
@@ -97,17 +94,3 @@ import EvmTypes (EvmType2TransactionParams(..))
 ```
 
 A complete TypeScript end-to-end run-through (party allocation, vault creation, deposit, claim, withdrawal, refund-on-failure) lives in `test/src/test/helpers/e2e-setup.ts` in this repo.
-
-## Dependencies
-
-- `daml-prim`, `daml-stdlib`, `daml-script`
-- `daml-signer` — Signer templates and the on-ledger signature verification primitive
-- `daml-abi` — calldata decoding and `abiHasErrorPrefix`
-- `daml-eip712` — `chainIdToDecimalText`
-
-## Build & test
-
-```bash
-dpm build
-dpm test
-```

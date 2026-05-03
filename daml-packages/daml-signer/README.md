@@ -2,7 +2,7 @@
 
 Generic MPC signing infrastructure for Canton. The Signer is a small set of Daml templates that lets a calling contract ask a trusted MPC service (the `sigNetwork` party) to produce signatures for transactions on a downstream chain (currently EVM; extensible to BTC, Solana, etc.). It is chain-agnostic and reusable across multiple consumer implementations.
 
-For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/helpers/e2e-setup.ts` in this repo. For deeper rationale see [Architecture](#architecture).
+For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/helpers/e2e-setup.ts` in this repo.
 
 ## How this fits together
 
@@ -23,14 +23,10 @@ For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For a
 
 For each `SignBidirectionalEvent` you emit, the MPC publishes two evidence contracts back on Canton:
 
-- `SignatureRespondedEvent` — child-key ECDSA signature over the EVM tx hash. **You read it, reconstruct the signed EIP-1559 tx, and submit it via `eth_sendRawTransaction`.** The MPC never touches the destination-chain mempool.
-- `RespondBidirectionalEvent` — root-key ECDSA signature over `keccak256(requestId ‖ serializedOutput)` plus the ABI-encoded return data (or a `0xdeadbeef`-prefixed payload on revert). You verify this signature on-ledger with `secp256k1WithEcdsaOnly` against the MPC root pubkey and act on `serializedOutput`.
+- `SignatureRespondedEvent` — ECDSA signature over the EVM tx hash. The integrator reconstructs the signed EIP-1559 tx and broadcasts it (the MPC stays out of the destination-chain mempool).
+- `RespondBidirectionalEvent` — ECDSA signature over `keccak256(requestId ‖ serializedOutput)` plus the ABI-encoded return data (or a `0xdeadbeef`-prefixed payload on revert). Verified on-ledger before the consumer acts on the outcome.
 
-Three rules to internalize before integrating:
-
-1. **The MPC holds a single root secp256k1 key.** Per deployment, the MPC derives a *child* EVM key from the root + `(operatorsHash, path)`. The **child key controls funds on EVM** — its address is your deployment's "vault address". The **root key signs the on-Canton outcome proof** (`RespondBidirectionalEvent`).
-2. **The MPC signs but does not broadcast.** Always you (the integrator) submit the signed EVM tx via `eth_sendRawTransaction`. The MPC just observes the receipt to drive the outcome.
-3. **The Signer enforces operator-set isolation, not replay protection.** Single-use semantics, calldata domain checks, and deployment isolation (via `path`) are your job — see [Consumer responsibilities](#consumer-responsibilities).
+The Signer enforces operator-set isolation, not replay protection — calldata validation, single-use semantics, and per-deployment `path` namespacing are the consumer's job. See [Security checklist for integrators](#security-checklist-for-integrators).
 
 ## Quickstart
 
@@ -65,7 +61,9 @@ import RequestId (computeRequestId, computeResponseHash)
 You'll be given two things to integrate against:
 
 1. The `signerCid` disclosed-contract envelope (the `Signer` singleton, exposed via `disclosedContracts` on every exercise that touches it).
-2. The MPC **root** secp256k1 public key (uncompressed, hex). Used to verify `RespondBidirectionalEvent.signature` on-ledger and to derive your deployment's EVM child address off-ledger.
+2. The MPC **root** secp256k1 public key (uncompressed, hex). You derive two children from it off-ledger using the Canton KDF — `ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`:
+   - The **EVM child address** for the deployment's vault (`path` = whatever you pass on `SignRequest`; `canton-sig`'s `deriveDepositAddress` does this in one call).
+   - The **response-verification pubkey** for the constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).
 
 ## Integrator lifecycle
 
@@ -135,8 +133,8 @@ The MPC service watches `SignBidirectionalEvent` (signatory `operators, requeste
 
 | Event | Signed by | Covers | Use |
 | --- | --- | --- | --- |
-| `SignatureRespondedEvent.signature` | **child** key (derived from root + `(operatorsHash, path)`) | the EVM transaction hash | **The consumer reads it, reconstructs the signed EIP-1559 tx, and submits it via `eth_sendRawTransaction`.** Consumers typically do **not** verify this signature on-ledger. |
-| `RespondBidirectionalEvent.signature` | **root** key | `responseHash = keccak256(requestId ‖ serializedOutput)` | The proof of execution + outcome. The consumer verifies this on-ledger and acts on `serializedOutput`. |
+| `SignatureRespondedEvent.signature` | **EVM child** key (derived from root + `(operatorsHash, path)`) | the EVM transaction hash | **The consumer reads it, reconstructs the signed EIP-1559 tx, and submits it via `eth_sendRawTransaction`.** Consumers typically do **not** verify this signature on-ledger. |
+| `RespondBidirectionalEvent.signature` | **response-verification child** key (derived from root + `(operatorsHash, "canton response key")` — same KDF, constant path) | `responseHash = keccak256(requestId ‖ serializedOutput)` | The proof of execution + outcome. The consumer verifies this on-ledger and acts on `serializedOutput`. |
 
 `serializedOutput` carries the ABI-encoded return data on success, or `0xdeadbeef`-prefixed payload on failure (predicate `abiHasErrorPrefix` in `daml-abi`).
 
@@ -170,10 +168,11 @@ nonconsuming choice MyDomainClaim : ...
     assertMsg "sigResp requester mismatch"  (sigResp.requester  == requester)
     assertMsg "sigResp requestId mismatch"  (sigResp.requestId  == anchor.requestId)
 
-    -- Verify the outcome signature against the MPC ROOT public key (stored at deployment).
+    -- Verify the outcome signature against the response-verification pubkey
+    -- (derived off-ledger from the MPC root + (operatorsHash, "canton response key") and stored at deployment).
     let responseHash = computeResponseHash anchor.requestId outcome.serializedOutput
     assertMsg "Invalid MPC signature"
-      (secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash mpcRootPublicKey)
+      (secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash mpcResponseVerifyKey)
 
     -- Interpret the outcome.
     --   abiHasErrorPrefix outcome.serializedOutput        → EVM revert; refund / abort
@@ -189,77 +188,41 @@ nonconsuming choice MyDomainClaim : ...
     create MyHolding with ...
 ```
 
-`mpcRootPublicKey` is the uncompressed secp256k1 public key (PublicKeyHex / SPKI form) you receive at integration time (see [Quickstart](#quickstart)). The `daml-vault` package stores it on the `Vault` contract as `evmMpcPublicKey` — the field name is historical; the value is the **root** key, not the EVM/child key.
+`mpcResponseVerifyKey` is the uncompressed secp256k1 pubkey you derive off-ledger from the MPC root + `(operatorsHash, "canton response key")` (formula and tooling pointer in [Security checklist #4](#security-checklist-for-integrators)) and store at deployment time. The `daml-vault` package stores it on the `Vault` contract under the field name `evmMpcPublicKey` — the field name is historical; the value is **not** the root key, and it is **not** the EVM child key either, it is the response-verification child derived with the constant `"canton response key"` path.
 
 ### Failure modes
 
 | Symptom | Meaning | Action |
 | --- | --- | --- |
-| `RespondBidirectionalEvent` arrives but `abiHasErrorPrefix outcome.serializedOutput` is `True` | EVM tx reverted; payload is `deadbeef` ‖ ABI-encoded error | Domain decision (refund, retry, surface error). |
-| `secp256k1WithEcdsaOnly` returns `False` | Signature does not match `responseHash` under your stored root pubkey | Reject the claim. Either the wrong pubkey is stored or the response is forged — escalate, do not retry. |
+| `RespondBidirectionalEvent` arrives but `abiHasErrorPrefix outcome.serializedOutput` is `True` | EVM tx reverted (or was replaced / dropped). The MPC still signs and publishes the outcome — payload is the 4-byte `0xdeadbeef` prefix followed by a 32-byte ABI-encoded `bool(true)` placeholder (no embedded EVM error data). The signature is valid; the prefix is the only revert signal. | Domain decision (refund, retry, surface error). |
+| `secp256k1WithEcdsaOnly` returns `False` | Signature does not match `responseHash` under your stored response-verification pubkey | Reject the claim. Either the wrong pubkey is stored (e.g. someone stored the root by mistake — see Security checklist #4) or the response is forged. Escalate, do not retry. |
 | Only one of the two response events ever arrives | You haven't broadcast the signed tx yet (so no receipt to observe) or the destination chain hasn't confirmed it | Broadcast (or rebroadcast) the signed tx. There is no Canton-side timeout — add one in your consumer if you need it. |
 | `Consume_*` exercised twice | Second exercise fails because the contract is already archived | Idempotent at your level (your claim choice should archive the anchor first, so a duplicate claim won't reach `Consume_*`). |
 | Duplicate `SignBidirectionalEvent` with identical `requestId` | Replay attempt | Signing is RFC6979-deterministic, so duplicates produce identical signatures. Your single-use anchor prevents acting on it twice. |
 
-### Consumer responsibilities
+### Security checklist for integrators
 
-The Signer enforces operator-set hygiene only. The consumer must:
+The Signer signs whatever bytes it is given and tracks no per-request state. Every item below is the consumer's responsibility — getting any of them wrong can leak funds.
 
-- **Replay-protect** repeated submissions of the same `SignRequest`. The Signer has no nonce, no nullifier set, and no approval state. See [Architecture → Authority model](#authority-model) for the patterns.
-- **Validate `txParams.calldata`** at the domain level (e.g. ABI selector / argument checks). The Signer signs whatever bytes it is given.
-- **Namespace `path`** when the same operator set is reused across multiple deployments — see [Architecture → Cross-operator-set isolation](#cross-operator-set-isolation).
-- **Store the MPC root public key** at deployment time (typically on your equivalent of `Vault`). It is what `secp256k1WithEcdsaOnly` checks against.
+| # | Must do | Why |
+| --- | --- | --- |
+| 1 | **Validate `txParams.calldata` before `SignBidirectional`** (ABI selector + argument checks). | The Signer will sign anything. |
+| 2 | **Use a single-use anchor for replay protection** (or a `requestId` nullifier set). | The Signer has no nonce, no nullifier set, no approval state. |
+| 3 | **Namespace `path` per deployment** (e.g. `${vaultId},${requester},${userPath}`). | The Signer isolates operator sets only; two consumers sharing an operator set share the key namespace unless `path` says otherwise. |
+| 4 | **Derive and store the response-verification pubkey at deployment time** on your equivalent of `Vault`: `derive_key(rootPub, derive_epsilon_canton(1, operatorsHash, "canton response key"))`. **Do not store the root pubkey directly** — verification will fail. | What `secp256k1WithEcdsaOnly` is checked against. Re-fetching at claim time opens a TOCTOU window. |
+| 5 | **Cross-check `(operators, requester, requestId)`** between your anchor, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`. | A misbehaving `sigNetwork` could otherwise pair a valid signature with a different anchor. |
+| 6 | **Archive the anchor first in the claim choice**, before any other assertion. | Replay protection only holds if the anchor is gone before a later assertion can revert. |
+| 7 | **Verify the outcome signature on-ledger before mutating state**, against the stored response-verification pubkey. | Forged `RespondBidirectionalEvent` rejected at the consumer's claim choice. |
+| 8 | **Reject `serializedOutput` starting with `0xdeadbeef`** (revert payload) or that does not ABI-decode to your expected success value. | EVM revert ≠ Canton-side success. |
 
-## Minimum-viable consumer
+Replay-protection options (pick what fits your threat model):
 
-If you just want to issue a single sign request and verify the outcome (no balance tracking, no multi-party setup), the smallest possible consumer is:
+- Single-use anchor template, one contract per request, archived on completion (the `daml-vault` pattern with `PendingDeposit` / `PendingWithdrawal`).
+- A registry contract that records every used `requestId` (nullifier set).
+- Off-chain operator enforcement via a request-approve flow before the consumer ever creates the `SignRequest`.
+- Nothing — relying on the destination chain's nonce when a duplicate sign is harmless (signing is RFC6979-deterministic, so duplicates produce identical signatures and only one tx can land).
 
-```daml
-template SimpleConsumer
-  with
-    operators        : [Party]
-    sigNetwork       : Party
-    mpcRootPublicKey : PublicKeyHex
-  where
-    signatory operators
-    observer sigNetwork
-
-    nonconsuming choice Sign : (ContractId SignBidirectionalEvent, ContractId SimpleAnchor)
-      with
-        requester   : Party
-        signerCid   : ContractId Signer
-        evmTxParams : EvmType2TransactionParams
-        path        : Text
-      controller requester
-      do
-        let caip2Id = "eip155:" <> chainIdToDecimalText evmTxParams.chainId
-        signReqCid <- create SignRequest with
-          operators; requester; sigNetwork
-          txParams = EvmType2TxParams evmTxParams
-          caip2Id; keyVersion = 1; path
-          algo = ""; dest = ""; params = ""
-          outputDeserializationSchema = "[{\"name\":\"\",\"type\":\"bool\"}]"
-          respondSerializationSchema  = "[{\"name\":\"\",\"type\":\"bool\"}]"
-        signEventCid <- exercise signerCid SignBidirectional with
-          signRequestCid = signReqCid; requester
-        signEvent <- fetch signEventCid
-        anchorCid <- create SimpleAnchor with
-          operators; requester; sigNetwork
-          requestId = requestIdFromSignEvent signEvent
-        pure (signEventCid, anchorCid)
-
-template SimpleAnchor
-  with
-    operators  : [Party]
-    requester  : Party
-    sigNetwork : Party
-    requestId  : BytesHex
-  where
-    signatory operators
-    observer requester, sigNetwork
-```
-
-Add a `Claim` choice that archives the anchor and runs the verification block from step 3, and you have a complete integration. For a real-world example with multi-party agreement, ABI-level calldata validation, optimistic balance updates, and refund-on-failure, see `daml-vault/daml/Erc20Vault.daml`.
+For a complete worked consumer, see [`daml-vault/daml/Erc20Vault.daml`](../daml-vault/daml/Erc20Vault.daml).
 
 # API Reference
 
@@ -296,7 +259,7 @@ Fields:
 | `txParams` | `TxParams` | Chain-agnostic transaction wrapper. |
 | `caip2Id` | `Text` | **Destination** chain CAIP-2 id, e.g. `"eip155:1"` (mainnet) or `"eip155:11155111"` (Sepolia). Build via `chainIdToDecimalText` from `daml-eip712`. |
 | `keyVersion` | `Int` | KDF version. Use `1` (the latest supported). |
-| `path` | `Text` | KDF subkey path. Consumer namespaces by deployment id when reusing operator sets — see [Cross-operator-set isolation](#cross-operator-set-isolation). |
+| `path` | `Text` | KDF subkey path. Consumer namespaces by deployment id when reusing operator sets (Security checklist #3). The Signer cannot enforce this. |
 | `algo` | `Text` | Always `""`. Hashed into `requestId` for forwards-compat; no current code path branches on it. |
 | `dest` | `Text` | Always `""`. Same. |
 | `params` | `Text` | Always `""`. Same. |
@@ -321,7 +284,7 @@ Fields: same as `SignRequest` plus `sender : BytesHex` (= `operatorsHash`, set b
 
 ### `SignatureRespondedEvent`
 
-EVM-tx signature evidence. Created by `Signer.Respond`. The signature is the **child-key** ECDSA signature of the underlying EVM transaction hash; the **consumer** reads it, reconstructs the signed tx, and broadcasts it via `eth_sendRawTransaction`. Verification on Canton is done via `RespondBidirectionalEvent` (a separate signature over the outcome).
+EVM-tx signature evidence. Created by `Signer.Respond`. Signed by the EVM child key (root + `(operatorsHash, path)`); used by the integrator to broadcast the signed tx. See [Integrator lifecycle § 2](#2-the-mpc-service-responds-off-canton-asynchronous) for the full key/usage table.
 
 - Signatory: `sigNetwork`
 - Observer: `operators, requester`
@@ -340,7 +303,7 @@ EVM-tx signature evidence. Created by `Signer.Respond`. The signature is the **c
 
 ### `RespondBidirectionalEvent`
 
-Outcome signature evidence. The signature is the **root-key** ECDSA signature of `responseHash = keccak256(requestId ‖ serializedOutput)`. **This is what the consumer verifies on-ledger** with `secp256k1WithEcdsaOnly`. `serializedOutput` is ABI-encoded return data on success, or `0xdeadbeef`+payload on failure (predicate `abiHasErrorPrefix` in `daml-abi`).
+Outcome signature evidence. Signed by the response-verification child key (root + `(operatorsHash, "canton response key")`) over `responseHash = keccak256(requestId ‖ serializedOutput)`. The consumer verifies it on-ledger with `secp256k1WithEcdsaOnly` against the response-verification pubkey it stored at deployment. `serializedOutput` is ABI-encoded return data on success, or `0xdeadbeef`+payload on failure (predicate `abiHasErrorPrefix` in `daml-abi`).
 
 - Signatory: `sigNetwork`
 - Observer: `operators, requester`
@@ -458,119 +421,3 @@ From the repo root:
 dpm build --all                                  # build all packages
 (cd daml-packages/daml-signer && dpm test)       # per-package — dpm test does NOT support --all
 ```
-
-# Architecture
-
-## Parties
-
-| Party        | Role                               | Owns in this package           |
-| ------------ | ---------------------------------- | ------------------------------ |
-| `sigNetwork` | MPC infrastructure (single party)  | `Signer`, evidence contracts   |
-| `operators`  | Consumer-side multi-sig `[Party]`  | Consumer templates (out of scope here) |
-| `requester`  | End user / initiator               | —                              |
-
-`sigNetwork` is both the MPC party identity AND the Signer operator. A consumer can have one or more operator parties (e.g. `[dex1, dex2, dex3]`); the Signer enforces only operator-set hygiene (`unique`, non-empty), not the consumer's multi-party agreement protocol.
-
-## Layer overview
-
-```
-Signer (singleton)                    -- sigNetwork deploys, shares blob via disclosed contracts
-  |
-  +-- SignBidirectional               -- requester exercises (via the calling contract);
-  |     controller: requester            delegates to SignRequest.Execute
-  |
-  +-- Respond                         -- sigNetwork publishes ECDSA signature for the underlying tx
-  |     controller: sigNetwork
-  |
-  +-- RespondBidirectional            -- sigNetwork publishes outcome signature after confirmation
-        controller: sigNetwork
-
-SignRequest (transient)               -- created by a consumer choice body, consumed via Execute in same tx
-                                         Execute computes `sender = computeOperatorsHash(operators)`
-                                         from the on-ledger signatory set (NOT user-supplied)
-SignBidirectionalEvent                -- what the MPC watches (signatory: operators, requester)
-SignatureRespondedEvent               -- ECDSA signature evidence (signatory: sigNetwork)
-RespondBidirectionalEvent             -- outcome signature evidence (signatory: sigNetwork)
-```
-
-The Signer layer **does not enforce signing uniqueness** — no Canton-side nonce, no used-`requestId` set, no Signer-side approval state. Replay prevention is the consumer's choice (see [Authority model](#authority-model) below).
-
-## Key derivation
-
-The MPC service holds threshold shares of a single root secp256k1 key pair. Per (`predecessorId`, `path`, `keyVersion`):
-
-```
-ε         = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{predecessorId}:{path}")
-childPriv = (rootPriv + ε) mod n
-childPub  = rootPub + ε·G                        -- consumers can derive this with deriveDepositAddress
-```
-
-`predecessorId` is `computeOperatorsHash(map partyToText operators)` (set by `SignRequest.Execute`, never caller-supplied). The KDF source-chain is hard-coded to `canton:global` — that's the source of the request, NOT the destination chain. `caip2Id` (the destination) enters `requestId`, not the KDF.
-
-Two keys, two roles:
-
-- The **child** secp256k1 keypair has an EVM address that holds funds on the destination chain. The MPC signs the EVM transaction with the child key (published in `SignatureRespondedEvent.signature`).
-- The **root** key signs the on-Canton outcome proof: `secp256k1WithEcdsaOnly(rootSig, responseHash, rootPub)`. This is what the consumer verifies on-ledger; the consumer stores the root pubkey at deployment time.
-
-The EVM child address is `derive_key(rootPub, epsilon)` where `epsilon` is the keccak above; flattening to an Ethereum address is the standard `keccak256(uncompressedPubKey[1..])[12..]`.
-
-## Authority model
-
-The Signer relies on Daml's flexible-controller pattern combined with disclosed contracts. A calling contract that needs a signature establishes this authority chain in a single transaction:
-
-```
-calling-contract choice (body authority: operators + requester)
-  -> create SignRequest                       requires: operators (signatory) + requester (signatory) -- both available
-  -> exercise Signer.SignBidirectional        requires: requester (controller); exercised on the disclosed Signer
-     -> SignRequest.Execute                   body authority: operators (signatory) + requester (controller)
-        -> SignBidirectionalEvent             signatory: operators, requester -- exact authority match
-```
-
-Constraints the Signer enforces:
-
-1. `SignRequest` requires `operators` and `requester` as signatories — only a calling contract that already holds both authorities can create one.
-2. `Signer` is exercised through a disclosed contract — `requester` is a flexible controller, so no explicit `sigNetwork` delegation is needed at exercise time.
-3. `SignRequest.Execute`'s body computes `sender = computeOperatorsHash (map partyToText operators)` from the on-ledger signatory list — `sender` cannot be supplied by the caller.
-4. `SignBidirectionalEvent`'s `ensure` clause re-checks `sender == computeOperatorsHash (...)` regardless of how the event was created.
-
-What the Signer does **not** enforce, and which the consumer must:
-
-- **Replay protection** across submissions of the same `SignRequest`. The Signer has no nonce, no nullifier set, and no approval-tracking state. Consumers pick the mechanism that fits their threat model — common choices include:
-    - a single-use anchor template (one anchor contract per request, archived on completion — the pattern used by [`daml-vault`](../daml-vault/README.md)'s `PendingDeposit` / `PendingWithdrawal`);
-    - a registry contract that records every used `requestId` (a nullifier set);
-    - off-chain operator enforcement via a request-approve flow before the consumer ever creates the `SignRequest`;
-    - or relying on the destination chain's transaction nonce when a duplicate sign is harmless — signing is RFC6979-deterministic, so a duplicate `SignBidirectionalEvent` produces an identical signature and only one destination-chain tx can ever land.
-- Operator-set + deployment isolation when the same operator set is reused across multiple deployments — see [Cross-operator-set isolation](#cross-operator-set-isolation).
-- Domain validation of `txParams.calldata` (e.g. ABI selector / argument checks). The Signer signs whatever bytes it is given.
-
-## Cross-operator-set isolation
-
-`sender` (the KDF predecessorId) is computed in `SignRequest.Execute` as `computeOperatorsHash (map partyToText operators)` — directly from the on-ledger `operators` signatory list. Since Canton party IDs are globally unique (`hint::sha256(namespace_key)`), two different operator sets can never produce the same `sender` even with identical `txParams`.
-
-```
-sender = computeOperatorsHash(map partyToText operators)
-computeOperatorsHash = keccak256(concat(map (keccak256 . toHex) (sort operatorTexts)))
-```
-
-The caller never supplies `sender`; it is derived from authority that the caller provably holds. The MPC's KDF and the `requestId` hash both depend on `sender`, so the MPC signature is transitively bound to the full operator set — stripping or reordering operators breaks verification.
-
-`SignBidirectionalEvent`'s `ensure` clause re-checks `sender == computeOperatorsHash(...)` — defence-in-depth against any future code path that would create the event without going through `Execute`.
-
-### Consumer responsibility: `path` namespacing
-
-The Signer **only** isolates operator sets, not deployments. Two consumer contracts that share the same operator set will share the same `sender`, and so the same key namespace, unless the consumer namespaces its requests via `path`. Since `path` feeds both the KDF and `requestId`, encoding a deployment identifier into `path` (the convention in `daml-vault` is to prefix with `vaultId`) gives different derived keys per deployment even with identical operators. The Signer cannot enforce this — it is a contract between the consumer and the MPC service.
-
-## Security model
-
-`SignBidirectionalEvent` has `signatory operators, requester` — `sigNetwork` is only an observer. A misbehaving `sigNetwork` therefore cannot create one of these directly; only a `requester` exercising a choice on a contract that already holds `operators` signatory authority can. The `Respond` and `RespondBidirectional` choices fetch the `SignBidirectionalEvent` and re-derive `(operators, requester, requestId)` from it, so even if `sigNetwork` exercises them with mismatched arguments, the choice body asserts the values match — a signature cannot be misattributed to a different operator set / requester / request than the one that actually produced the event.
-
-The on-ledger `secp256k1WithEcdsaOnly` check binds every accepted outcome to your stored MPC root pubkey, so a forged `RespondBidirectionalEvent` is rejected at the consumer's claim choice.
-
-Signing is RFC6979-deterministic, so a duplicate `SignBidirectionalEvent` produces an identical signature; combined with the consumer's single-use anchor, that means at most one destination-chain tx ever lands per request.
-
-## Design decisions
-
-- **No Signer-layer nonce.** The Signer enforces only that distinct operator sets cannot share a key namespace (by computing `sender = operatorsHash` from on-ledger signatories inside `SignRequest.Execute`, not by trusting caller input). Replay prevention is delegated to your consumer — pick whichever mechanism fits (single-use anchor, used-`requestId` registry, etc.).
-- **`Respond*` takes a `signEventCid`, not raw fields.** The choice fetches the event and re-derives `(operators, requester, requestId)` from it; a misbehaving `sigNetwork` cannot misattribute a signature.
-- **`SignBidirectionalEvent` re-checks `sender`.** Defence in depth against any future code path that creates the event without going through `Execute`.
-- **Two signatures per request.** The child-key signature in `SignatureRespondedEvent` is what you assemble into the signed EIP-1559 tx and submit via `eth_sendRawTransaction`; the root-key signature in `RespondBidirectionalEvent` is the on-Canton outcome proof you verify with `secp256k1WithEcdsaOnly`. Splitting them lets you verify outcomes against a single, stable root pubkey without per-deployment key bookkeeping, and keeps the MPC service out of the destination-chain mempool.

@@ -34,8 +34,6 @@ keccak256 $
   <> eip712EncodeString  params                      -- 32B
 ```
 
-Every implementation reproducing this hash must apply the same rules in the same order.
-
 ## API
 
 ### Encoders
@@ -78,13 +76,3 @@ myCommitment label amount =
   keccak256 (eip712EncodeString label <> eip712EncodeUint256 amount)
 ```
 
-## Dependencies
-
-- `daml-prim`, `daml-stdlib`, `daml-script`
-
-## Build & test
-
-```bash
-dpm build
-dpm test
-```

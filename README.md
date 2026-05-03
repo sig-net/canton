@@ -15,6 +15,12 @@ MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (dep
 
 For executable end-to-end flows: `test/src/test/sepolia-e2e.test.ts` (deposit) and `test/src/test/sepolia-withdrawal-e2e.test.ts` (withdrawal + refund). The shared `test/src/test/helpers/e2e-setup.ts` is the canonical worked example of disclosed-contract wiring, `RequestDeposit` arguments, signed-tx broadcast, and `ClaimDeposit`.
 
+## Architecture in one paragraph
+
+The `Signer` is a singleton signed by the MPC party (`sigNetwork`) and disclosed to consumer contracts. A consumer choice creates a transient `SignRequest` (signed by `operators + requester`) and immediately exercises `Signer.SignBidirectional`, which derives the operator-set fingerprint on-chain (`sender = operatorsHash`) and emits a `SignBidirectionalEvent` for the MPC to watch. The MPC derives a child secp256k1 key from the root key + (`operatorsHash`, `path`), threshold-signs the EVM transaction, and publishes the signature in `SignatureRespondedEvent`. **The consumer (or test/client) reads that signature, reconstructs the signed EIP-1559 tx, and submits it to the destination chain via `eth_sendRawTransaction`** — the MPC never touches the destination-chain mempool. Once the receipt is observable, the MPC re-simulates the call to extract the ABI-encoded return data and publishes a `RespondBidirectionalEvent` whose signature (made with the **root** key over `keccak256(requestId ‖ serializedOutput)`) is verified on-ledger by the consumer's claim choice via `secp256k1WithEcdsaOnly`. The `daml-vault` package is one consumer of this protocol; ERC-20 holdings, deposit anchors, and refund-on-failure withdrawal are domain logic on top of the generic Signer.
+
+Per-package details live in the documents listed under [Where to start](#where-to-start). Earlier design notes under `proposals/` describe pre-current iterations and may not reflect the shipped code.
+
 ## Prerequisites
 
 | Tool           | Version | Install                                                           |
@@ -24,18 +30,7 @@ For executable end-to-end flows: `test/src/test/sepolia-e2e.test.ts` (deposit) a
 | Node.js        | 24+     | [nodejs.org](https://nodejs.org/)                                 |
 | pnpm           | 10+     | `corepack enable && corepack prepare pnpm@latest --activate`      |
 
-After installing DPM, make sure `~/.dpm/bin` is on your `PATH`.
-
-## Configuration
-
-The MPC service reads `CANTON_JSON_API_URL` from `test/.env` and passes it to the `CantonClient` constructor. Defaults to `http://localhost:7575` if unset. Tests always use the default.
-
-```bash
-# In test/.env — point to a remote or non-default sandbox
-CANTON_JSON_API_URL=http://my-canton-node:7575
-```
-
-See `test/.env.example` for all available variables.
+After installing DPM, make sure `~/.dpm/bin` is on your `PATH`. To point at a non-default sandbox, set `CANTON_JSON_API_URL` in `test/.env` (defaults to `http://localhost:7575`); see `test/.env.example` for all variables.
 
 ## Quick Start
 
@@ -70,15 +65,7 @@ cd test
 pnpm test          # single run (unit + integration)
 ```
 
-### One-liner rebuild
-
-If you change Daml sources and need a full clean rebuild (requires sandbox running for OpenAPI codegen):
-
-```bash
-cd test && pnpm generate
-```
-
-This runs `clean -> daml:build -> codegen:daml -> codegen:api -> install`.
+After Daml source changes: `cd test && pnpm generate` (clean + DAR + codegen + install; needs the sandbox up for OpenAPI codegen).
 
 ## Daml Unit Tests
 
@@ -133,12 +120,6 @@ Send to the faucet address:
 # Start sandbox in a separate terminal first, then:
 pnpm test          # runs all tests including Sepolia e2e when env is set
 ```
-
-## Architecture in one paragraph
-
-The `Signer` is a singleton signed by the MPC party (`sigNetwork`) and disclosed to consumer contracts. A consumer choice creates a transient `SignRequest` (signed by `operators + requester`) and immediately exercises `Signer.SignBidirectional`, which derives the operator-set fingerprint on-chain (`sender = operatorsHash`) and emits a `SignBidirectionalEvent` for the MPC to watch. The MPC derives a child secp256k1 key from the root key + (`operatorsHash`, `path`), threshold-signs the EVM transaction, and publishes the signature in `SignatureRespondedEvent`. **The consumer (or test/client) reads that signature, reconstructs the signed EIP-1559 tx, and submits it to the destination chain via `eth_sendRawTransaction`** — the MPC never touches the destination-chain mempool. Once the receipt is observable, the MPC re-simulates the call to extract the ABI-encoded return data and publishes a `RespondBidirectionalEvent` whose signature (made with the **root** key over `keccak256(requestId ‖ serializedOutput)`) is verified on-ledger by the consumer's claim choice via `secp256k1WithEcdsaOnly`. The `daml-vault` package is one consumer of this protocol; ERC-20 holdings, deposit anchors, and refund-on-failure withdrawal are domain logic on top of the generic Signer.
-
-Per-package details live in the documents listed under [Where to start](#where-to-start). Earlier design notes under `proposals/` describe pre-current iterations and may not reflect the shipped code.
 
 ## Available Scripts
 
