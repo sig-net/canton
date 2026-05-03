@@ -1,6 +1,19 @@
 # Canton MPC PoC
 
-MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (deposits, withdrawals, holdings) while a TypeScript MPC service signs EVM transactions using threshold-derived keys via [signet.js](https://github.com/aspect-build/signet.js).
+MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (deposits, withdrawals, holdings); a TypeScript MPC service signs EVM transactions using threshold-derived keys via [signet.js](https://github.com/sig-net/signet.js); the Canton ledger verifies every MPC signature on-chain via `secp256k1WithEcdsaOnly` before crediting or debiting holdings.
+
+## Where to start
+
+| You are… | Read |
+| --- | --- |
+| **Integrating the Signer into a new Daml domain** | [`daml-packages/daml-signer/README.md`](daml-packages/daml-signer/README.md) — authority model, lifecycle, full API |
+| **Using the ERC-20 Vault** (deposit / claim / withdraw / refund) | [`daml-packages/daml-vault/README.md`](daml-packages/daml-vault/README.md) — templates, choices, calldata shape, security invariants |
+| **Building a TypeScript client / 3rd-party integration** | [`ts-packages/canton-sig/README.md`](ts-packages/canton-sig/README.md) — `CantonClient` + crypto + EVM tx helpers |
+| **Reproducing `requestId` cross-language** | [`daml-packages/daml-eip712/README.md`](daml-packages/daml-eip712/README.md) — primitive encoders + composition rule |
+| **Decoding ABI return data on-ledger** | [`daml-packages/daml-abi/README.md`](daml-packages/daml-abi/README.md) — slot vs byte-offset addressing |
+| **Running a full multi-participant Canton stack** | [`SETUP.md`](SETUP.md) — local CN Quickstart (Keycloak, Splice, observability) |
+
+For executable end-to-end flows: `test/src/test/sepolia-e2e.test.ts` (deposit) and `test/src/test/sepolia-withdrawal-e2e.test.ts` (withdrawal + refund). The shared `test/src/test/helpers/e2e-setup.ts` is the canonical worked example of disclosed-contract wiring, `RequestDeposit` arguments, signed-tx broadcast, and `ClaimDeposit`.
 
 ## Prerequisites
 
@@ -121,13 +134,11 @@ Send to the faucet address:
 pnpm test          # runs all tests including Sepolia e2e when env is set
 ```
 
-## Design
+## Architecture in one paragraph
 
-- [Signer layer](daml-packages/daml-signer/README.md) — generic MPC signing infrastructure, authority delegation flow, MPC service flow, KDF, and security model
-- [Vault layer](daml-packages/daml-vault/README.md) — ERC-20 custody contracts (consumer of the Signer layer)
-- [Deposit flow](proposals/E2E_DEPOSIT_PLAN_COMPACT.md) — end-to-end deposit lifecycle: MPC signing, Sepolia submission, and Canton claim
-- [Withdrawal flow](proposals/E2E_WITHDRAWAL_PLAN_COMPACT.md) — end-to-end withdrawal lifecycle: holding burn, MPC signing, Sepolia submission, and refund-on-failure
-- [CN Quickstart setup](../cn-quickstart/SETUP.md) — full local Canton Network environment (multi-participant, Keycloak, Splice)
+The `Signer` is a singleton signed by the MPC party (`sigNetwork`) and disclosed to consumer contracts. A consumer choice creates a transient `SignRequest` (signed by `operators + requester`) and immediately exercises `Signer.SignBidirectional`, which derives the operator-set fingerprint on-chain (`sender = operatorsHash`) and emits a `SignBidirectionalEvent` for the MPC to watch. The MPC derives a child secp256k1 key from the root key + (`operatorsHash`, `path`), threshold-signs the EVM transaction, and publishes the signature in `SignatureRespondedEvent`. **The consumer (or test/client) reads that signature, reconstructs the signed EIP-1559 tx, and submits it to the destination chain via `eth_sendRawTransaction`** — the MPC never touches the destination-chain mempool. Once the receipt is observable, the MPC re-simulates the call to extract the ABI-encoded return data and publishes a `RespondBidirectionalEvent` whose signature (made with the **root** key over `keccak256(requestId ‖ serializedOutput)`) is verified on-ledger by the consumer's claim choice via `secp256k1WithEcdsaOnly`. The `daml-vault` package is one consumer of this protocol; ERC-20 holdings, deposit anchors, and refund-on-failure withdrawal are domain logic on top of the generic Signer.
+
+Per-package details live in the documents listed under [Where to start](#where-to-start). Earlier design notes under `proposals/` describe pre-current iterations and may not reflect the shipped code.
 
 ## Available Scripts
 
