@@ -55,7 +55,8 @@ export async function signEvmTxHash(
 type CantonSignature = { tag: "EcdsaSig"; value: { der: string; recoveryId: number } };
 
 /**
- * Sign the MPC response with the Canton response child key.
+ * Sign the MPC response with the Canton response child key derived from
+ * predecessorId as the KDF sender and "canton response key" as the path.
  * responseHash = keccak256(requestId ‖ mpcOutput).
  */
 export async function signMpcResponse(
