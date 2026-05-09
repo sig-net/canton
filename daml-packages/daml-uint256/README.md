@@ -62,9 +62,10 @@ import HexCompare (hexGtUint)
 
 let a = uint256FromHex "0de0b6b3a7640000"  -- 1e18
 let b = uint256FromHex "0de0b6b3a7640000"
-let sum = uint256ToHex (uint256Add a b)     -- "1bc16d674ec80000"
+let sum = uint256ToHex (uint256Add a b)
+-- "0000000000000000000000000000000000000000000000001bc16d674ec80000"
 
-let isGreater = hexGtUint sum "0de0b6b3a7640000"  -- True
+let isGreater = hexGtUint sum "0000000000000000000000000000000000000000000000000de0b6b3a7640000"  -- True
 ```
 
 ## Limitations
