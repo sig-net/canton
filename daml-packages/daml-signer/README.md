@@ -113,8 +113,10 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
     let requestId = requestIdFromSignEvent signEvent
 
     -- 1e. Persist whatever single-use anchor enforces your replay-protection policy.
+    -- Store signEventCid too, so the claim/completion choice can archive the
+    -- request event after the MPC evidence has been validated.
     anchorCid <- create MyAnchor with
-      operators; requester; sigNetwork; requestId; evmTxParams
+      operators; requester; sigNetwork; requestId; evmTxParams; signEventCid
 
     pure (signEventCid, anchorCid)
 ```
@@ -185,11 +187,18 @@ nonconsuming choice MyDomainClaim : ...
     exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
     exercise signatureRespondedEventCid   Consume_SignatureResponded   with actor = requester
 
+    -- Clean up the original request event after both response contracts are
+    -- validated and consumed. The choice body has operators + requester
+    -- authority, so it can archive SignBidirectionalEvent directly.
+    archive anchor.signEventCid
+
     -- Apply your domain effect.
     create MyHolding with ...
 ```
 
 `mpcResponseVerifyKey` is the uncompressed secp256k1 pubkey you derive off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"` (formula and tooling pointer in [Security checklist #4](#security-checklist-for-integrators)) and store at deployment time. The `daml-vault` package stores this value on `Vault.mpcResponseVerifyKey`.
+
+`SignBidirectionalEvent` has no custom consume choice by design. A generic consume choice would let an authorized party delete the request before the MPC service has responded. The recommended pattern is to keep `signEventCid` in the consumer's pending anchor and archive it only in the final claim/completion transaction, after the response evidence has been validated.
 
 ### Failure modes
 
@@ -205,20 +214,21 @@ nonconsuming choice MyDomainClaim : ...
 
 The Signer signs whatever bytes it is given and tracks no per-request state. Every item below is the consumer's responsibility — getting any of them wrong can leak funds.
 
-| #   | Must do                                                                                                                                                                                                                                                                                                                                                               | Why                                                                                                                                 |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Validate `txParams.calldata` before `SignBidirectional`** (ABI selector + argument checks).                                                                                                                                                                                                                                                                         | The Signer will sign anything.                                                                                                      |
-| 2   | **Use a single-use anchor for replay protection** (or a `requestId` nullifier set).                                                                                                                                                                                                                                                                                   | The Signer has no nonce, no nullifier set, no approval state.                                                                       |
-| 3   | **Namespace `path` per deployment** (e.g. `${vaultId},${requester},${userPath}`).                                                                                                                                                                                                                                                                                     | The Signer isolates operator sets only; two consumers sharing an operator set share the key namespace unless `path` says otherwise. |
-| 4   | **Derive and store the response-verification pubkey at deployment time** on your equivalent of `Vault`: `derive_key(rootPub, derive_epsilon_canton(1, operatorsHash, "canton response key"))`, where the second argument is `sender = operatorsHash` and the third is the constant response path. **Do not store the root pubkey directly** — verification will fail. | What `secp256k1WithEcdsaOnly` is checked against. Re-fetching at claim time opens a TOCTOU window.                                  |
-| 5   | **Cross-check `(operators, requester, requestId)`** between your anchor, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`.                                                                                                                                                                                                                                  | A misbehaving `sigNetwork` could otherwise pair a valid signature with a different anchor.                                          |
-| 6   | **Archive the anchor first in the claim choice**, before any other assertion.                                                                                                                                                                                                                                                                                         | Replay protection only holds if the anchor is gone before a later assertion can revert.                                             |
-| 7   | **Verify the outcome signature on-ledger before mutating state**, against the stored response-verification pubkey.                                                                                                                                                                                                                                                    | Forged `RespondBidirectionalEvent` rejected at the consumer's claim choice.                                                         |
-| 8   | **Reject `serializedOutput` starting with `0xdeadbeef`** (revert payload) or that does not ABI-decode to your expected success value.                                                                                                                                                                                                                                 | EVM revert ≠ Canton-side success.                                                                                                   |
+| #   | Must do                                                                                                                                                                                                                                                                                                                                                               | Why                                                                                                                                  |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | **Validate `txParams.calldata` before `SignBidirectional`** (ABI selector + argument checks).                                                                                                                                                                                                                                                                         | The Signer will sign anything.                                                                                                       |
+| 2   | **Use a single-use anchor for replay protection** (or a `requestId` nullifier set).                                                                                                                                                                                                                                                                                   | The Signer has no nonce, no nullifier set, no approval state.                                                                        |
+| 3   | **Namespace `path` per deployment** (e.g. `${vaultId},${requester},${userPath}`).                                                                                                                                                                                                                                                                                     | The Signer isolates operator sets only; two consumers sharing an operator set share the key namespace unless `path` says otherwise.  |
+| 4   | **Derive and store the response-verification pubkey at deployment time** on your equivalent of `Vault`: `derive_key(rootPub, derive_epsilon_canton(1, operatorsHash, "canton response key"))`, where the second argument is `sender = operatorsHash` and the third is the constant response path. **Do not store the root pubkey directly** — verification will fail. | What `secp256k1WithEcdsaOnly` is checked against. Re-fetching at claim time opens a TOCTOU window.                                   |
+| 5   | **Cross-check `(operators, requester, requestId)`** between your anchor, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`.                                                                                                                                                                                                                                  | A misbehaving `sigNetwork` could otherwise pair a valid signature with a different anchor.                                           |
+| 6   | **Archive the anchor first in the claim choice**, before any other assertion.                                                                                                                                                                                                                                                                                         | Replay protection only holds if the anchor is gone before a later assertion can revert.                                              |
+| 7   | **Verify the outcome signature on-ledger before mutating state**, against the stored response-verification pubkey.                                                                                                                                                                                                                                                    | Forged `RespondBidirectionalEvent` rejected at the consumer's claim choice.                                                          |
+| 8   | **Reject `serializedOutput` starting with `0xdeadbeef`** (revert payload) or that does not ABI-decode to your expected success value.                                                                                                                                                                                                                                 | EVM revert ≠ Canton-side success.                                                                                                    |
+| 9   | **Store `signEventCid` on your pending anchor and archive it after validated completion.**                                                                                                                                                                                                                                                                            | Keeps the original request event available for the MPC response path, then removes stale request events once the domain action acts. |
 
 Replay-protection options (pick what fits your threat model):
 
-- Single-use anchor template, one contract per request, archived on completion (the `daml-vault` pattern with `PendingDeposit` / `PendingWithdrawal`).
+- Single-use anchor template, one contract per request, archived on completion. Store `signEventCid` on the anchor and archive it in the same completion transaction (the `daml-vault` pattern with `PendingDeposit` / `PendingWithdrawal`).
 - A registry contract that records every used `requestId` (nullifier set).
 - Off-chain operator enforcement via a request-approve flow before the consumer ever creates the `SignRequest`.
 - Nothing — relying on the destination chain's nonce when a duplicate sign is harmless (signing is RFC6979-deterministic, so duplicates produce identical signatures and only one tx can land).
@@ -275,7 +285,7 @@ Fields:
 
 ### `SignBidirectionalEvent`
 
-Created by `SignRequest.Execute`. **What the MPC watches.** Has no choices — never archived directly.
+Created by `SignRequest.Execute`. **What the MPC watches.** Has no custom choices. Consumers should archive it directly from their final claim/completion choice after both MPC response contracts have been validated and consumed.
 
 - Signatory: `operators, requester`
 - Observer: `sigNetwork`

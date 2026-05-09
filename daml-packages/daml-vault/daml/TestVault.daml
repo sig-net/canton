@@ -5,9 +5,16 @@ import DA.Optional (fromSome, isSome, isNone)
 import DA.Crypto.Text (BytesHex, byteCount)
 import Daml.Script
 
+import qualified Signer as Signer
 import Signer
+  ( Signer(..)
+  , SignBidirectionalEvent(..)
+  , SignatureRespondedEvent(..)
+  , RespondBidirectionalEvent(..)
+  )
 import Erc20Vault
 import EvmTypes (EvmType2TransactionParams)
+import RequestId (computeOperatorsHash)
 import TestFixtures
   ( testPubKeyHex, claimTestPubKey, claimTestSignature, claimTestRequestId
   , refundTestSignature, boolFalseTestSignature, ecdsaTestSig
@@ -16,6 +23,7 @@ import TestFixtures
   , erc20TransferSelector
   , erc20BoolSchema, boolTrueMpcOutput, boolFalseMpcOutput, errorPrefixMpcOutput
   )
+import TxParams (TxParams(..))
 
 ------------------------------------------------------------------------
 -- Helpers
@@ -55,19 +63,45 @@ setupWithKey pubKey = do
 
   pure (sigNetwork, operator, requester, signerCid, vaultCid)
 
-mkPendingDeposit : Party -> Party -> Party -> BytesHex -> EvmType2TransactionParams -> Script (ContractId PendingDeposit)
-mkPendingDeposit operator requester sigNetwork requestId evmTxParams =
-  submit operator do
+mkSignEvent : Party -> Party -> Party -> EvmType2TransactionParams -> Script (ContractId SignBidirectionalEvent)
+mkSignEvent operator requester sigNetwork evmTxParams =
+  submit (actAs operator <> actAs requester) do
+    createCmd SignBidirectionalEvent with
+      operators = [operator]; requester; sigNetwork
+      sender = computeOperatorsHash [partyToText operator]
+      txParams = EvmType2TxParams evmTxParams
+      caip2Id = "eip155:11155111"
+      keyVersion = 1
+      path = "test-vault," <> partyToText requester <> ",fixture"
+      algo = "ECDSA"; dest = "ethereum"; params = ""
+      outputDeserializationSchema = erc20BoolSchema
+      respondSerializationSchema = erc20BoolSchema
+
+mkPendingDepositWithSignEvent : Party -> Party -> Party -> BytesHex -> EvmType2TransactionParams -> Script (ContractId SignBidirectionalEvent, ContractId PendingDeposit)
+mkPendingDepositWithSignEvent operator requester sigNetwork requestId evmTxParams = do
+  requestEventCid <- mkSignEvent operator requester sigNetwork evmTxParams
+  pendingCid <- submit operator do
     createCmd PendingDeposit with
       operators = [operator]; requester; sigNetwork
-      requestId; evmTxParams
+      requestId; evmTxParams; signEventCid = requestEventCid
+  pure (requestEventCid, pendingCid)
+
+mkPendingDeposit : Party -> Party -> Party -> BytesHex -> EvmType2TransactionParams -> Script (ContractId PendingDeposit)
+mkPendingDeposit operator requester sigNetwork requestId evmTxParams =
+  snd <$> mkPendingDepositWithSignEvent operator requester sigNetwork requestId evmTxParams
+
+mkPendingWithdrawalWithSignEvent : Party -> Party -> Party -> BytesHex -> EvmType2TransactionParams -> BytesHex -> BytesHex -> Script (ContractId SignBidirectionalEvent, ContractId PendingWithdrawal)
+mkPendingWithdrawalWithSignEvent operator requester sigNetwork requestId evmTxParams erc20Address amount = do
+  requestEventCid <- mkSignEvent operator requester sigNetwork evmTxParams
+  pendingCid <- submit operator do
+    createCmd PendingWithdrawal with
+      operators = [operator]; requester; sigNetwork
+      requestId; evmTxParams; erc20Address; amount; signEventCid = requestEventCid
+  pure (requestEventCid, pendingCid)
 
 mkPendingWithdrawal : Party -> Party -> Party -> BytesHex -> EvmType2TransactionParams -> BytesHex -> BytesHex -> Script (ContractId PendingWithdrawal)
 mkPendingWithdrawal operator requester sigNetwork requestId evmTxParams erc20Address amount =
-  submit operator do
-    createCmd PendingWithdrawal with
-      operators = [operator]; requester; sigNetwork
-      requestId; evmTxParams; erc20Address; amount
+  snd <$> mkPendingWithdrawalWithSignEvent operator requester sigNetwork requestId evmTxParams erc20Address amount
 
 ------------------------------------------------------------------------
 -- Deposit lifecycle
@@ -90,6 +124,7 @@ testDepositLifecycle = do
   let pd = fromSome pending
   assertMsg "requestId must be 32 bytes" (byteCount pd.requestId == 32)
   assertMsg "evmTxParams must match" (pd.evmTxParams == sampleEvmType2Params)
+  assertMsg "pending must retain sign event cid" (pd.signEventCid == signEventCid)
 
   -- SignBidirectionalEvent must exist
   signEvent <- queryContractId requester signEventCid
@@ -105,7 +140,7 @@ testClaimHappyPath = do
   (sigNetwork, operator, requester, _signerCid, vaultCid) <- setupWithKey claimTestPubKey
 
   -- Create evidence contracts directly
-  pendingCid <- mkPendingDeposit operator requester sigNetwork claimTestRequestId sampleEvmType2Params
+  (signEventCid, pendingCid) <- mkPendingDepositWithSignEvent operator requester sigNetwork claimTestRequestId sampleEvmType2Params
 
   respondBidirectionalEventCid <- submit sigNetwork do
     createCmd RespondBidirectionalEvent with
@@ -138,6 +173,8 @@ testClaimHappyPath = do
   assertMsg "outcome archived" (oldOutcome == None)
   oldSig <- queryContractId requester signatureRespondedEventCid
   assertMsg "sig archived" (oldSig == None)
+  oldSignEvent <- queryContractId requester signEventCid
+  assertMsg "sign event archived" (oldSignEvent == None)
 
 ------------------------------------------------------------------------
 -- ClaimDeposit rejects wrong requester
@@ -318,11 +355,12 @@ testVaultRejectsDirtyAddressPadding = do
 testPendingDepositRejectsWrongRequestIdLength : Script ()
 testPendingDepositRejectsWrongRequestIdLength = do
   (sigNetwork, operator, requester, _signerCid, _vaultCid) <- setup
+  requestEventCid <- mkSignEvent operator requester sigNetwork sampleEvmType2Params
 
   submitMustFail operator do
     createCmd PendingDeposit with
       operators = [operator]; requester; sigNetwork
-      requestId = "aa"; evmTxParams = sampleEvmType2Params
+      requestId = "aa"; evmTxParams = sampleEvmType2Params; signEventCid = requestEventCid
 
 -- requester cannot exercise Signer.Respond (controller is sigNetwork)
 testRespondWrongController : Script ()
@@ -339,7 +377,7 @@ testRespondWrongController = do
 
   -- requester tries to exercise Respond (controller is sigNetwork)
   submitMustFail requester do
-    exerciseCmd signerCid Respond with
+    exerciseCmd signerCid Signer.Respond with
       signEventCid
       requestId = pending.requestId
       signature = ecdsaTestSig "00"
@@ -414,6 +452,7 @@ testWithdrawalLifecycle = do
   assertMsg "requestId must be 32 bytes" (byteCount pw.requestId == 32)
   assertMsg "evmTxParams must match" (pw.evmTxParams == sampleWithdrawalEvmParams)
   assertMsg "requester must match" (pw.requester == requester)
+  assertMsg "pending withdrawal must retain sign event cid" (pw.signEventCid == signEventCid)
 
   -- sign event must exist
   signEvent <- queryContractId requester signEventCid
@@ -432,7 +471,7 @@ testWithdrawalCompleteSuccess : Script ()
 testWithdrawalCompleteSuccess = do
   (sigNetwork, operator, requester, _signerCid, vaultCid) <- setupWithKey claimTestPubKey
 
-  pendingCid <- mkPendingWithdrawal
+  (signEventCid, pendingCid) <- mkPendingWithdrawalWithSignEvent
     operator requester sigNetwork claimTestRequestId sampleWithdrawalEvmParams
     sampleErc20Address sampleHoldingAmount
 
@@ -457,6 +496,8 @@ testWithdrawalCompleteSuccess = do
 
   oldPending <- queryContractId requester pendingCid
   assertMsg "pending must be archived" (isNone oldPending)
+  oldSignEvent <- queryContractId requester signEventCid
+  assertMsg "sign event must be archived" (isNone oldSignEvent)
 
 ------------------------------------------------------------------------
 -- Withdrawal complete failure returns refund holding
