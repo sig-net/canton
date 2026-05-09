@@ -86,11 +86,12 @@ template Erc20Holding
 
 template PendingDeposit
   with
-    operators   : [Party]
-    requester   : Party
-    sigNetwork  : Party
-    requestId   : BytesHex
-    evmTxParams : EvmType2TransactionParams
+    operators    : [Party]
+    requester    : Party
+    sigNetwork   : Party
+    requestId    : BytesHex
+    evmTxParams  : EvmType2TransactionParams
+    signEventCid : ContractId SignBidirectionalEvent
   where
     signatory operators
     observer requester, sigNetwork
@@ -103,6 +104,7 @@ template PendingWithdrawal
     sigNetwork   : Party
     requestId    : BytesHex
     evmTxParams  : EvmType2TransactionParams
+    signEventCid : ContractId SignBidirectionalEvent
     erc20Address : BytesHex
     amount       : BytesHex
   where
@@ -212,7 +214,7 @@ template Vault
         let requestId = requestIdFromSignEvent signEvent
 
         pendingCid <- create PendingDeposit with
-          operators; requester; sigNetwork; requestId; evmTxParams
+          operators; requester; sigNetwork; requestId; evmTxParams; signEventCid
 
         pure (signEventCid, pendingCid)
 
@@ -247,6 +249,7 @@ template Vault
 
         exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
         exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
+        archive pending.signEventCid
 
         let amount = abiDecodeUint (abiStripSelector (pending.evmTxParams).calldata) 1
         create Erc20Holding with
@@ -311,7 +314,7 @@ template Vault
         let requestId = requestIdFromSignEvent signEvent
 
         pendingCid <- create PendingWithdrawal with
-          operators; requester; sigNetwork; requestId; evmTxParams
+          operators; requester; sigNetwork; requestId; evmTxParams; signEventCid
           erc20Address = holding.erc20Address
           amount = holding.amount
 
@@ -343,6 +346,7 @@ template Vault
 
         exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
         exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
+        archive pending.signEventCid
 
         let shouldRefund =
               abiHasErrorPrefix outcome.serializedOutput
