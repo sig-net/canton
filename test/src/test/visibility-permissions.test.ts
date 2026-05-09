@@ -8,6 +8,7 @@ import {
   findCreated,
   firstCreated,
   deriveDepositAddress,
+  deriveResponseVerificationPublicKey,
   signMpcResponse,
   toSpkiPublicKey,
   DAR_PATH,
@@ -126,7 +127,12 @@ describe("ledger visibility + permission model", () => {
     signerDisclosure = await canton.getDisclosedContract([sigNetwork], SIGNER_TEMPLATE, signerCid);
 
     // Create Vault (signatory: operators=[operator])
-    const mpcPubKeySpki = toSpkiPublicKey(MPC_ROOT_PUBLIC_KEY);
+    const responseVerificationPubKey = deriveResponseVerificationPublicKey(
+      MPC_ROOT_PUBLIC_KEY,
+      predecessorId,
+      KEY_VERSION,
+    );
+    const mpcPubKeySpki = toSpkiPublicKey(responseVerificationPubKey);
     const vaultResult = await canton.createContract(OPERATOR_USER, [operator], VAULT_TEMPLATE, {
       operators: [operator],
       sigNetwork,
@@ -301,7 +307,13 @@ describe("ledger visibility + permission model", () => {
     ).rejects.toThrow();
 
     const mpcOutput = "0000000000000000000000000000000000000000000000000000000000000001";
-    const mpcSignature = await signMpcResponse(MPC_ROOT_PRIVATE_KEY, requestId, mpcOutput);
+    const mpcSignature = await signMpcResponse(
+      MPC_ROOT_PRIVATE_KEY,
+      predecessorId,
+      requestId,
+      mpcOutput,
+      KEY_VERSION,
+    );
     const outcomeResult = await canton.exerciseChoice(
       SIGNETWORK_USER,
       [sigNetwork],

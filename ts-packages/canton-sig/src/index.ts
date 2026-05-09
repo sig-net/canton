@@ -29,7 +29,14 @@ export {
   derivePublicKey,
 } from "./mpc/crypto.js";
 export type { TxParams } from "./mpc/crypto.js";
-export { deriveDepositAddress, chainIdHexToCaip2, KEY_VERSION } from "./mpc/address-derivation.js";
+export {
+  deriveCantonPublicKey,
+  deriveDepositAddress,
+  deriveResponseVerificationPublicKey,
+  chainIdHexToCaip2,
+  CANTON_RESPONSE_KEY_PATH,
+  KEY_VERSION,
+} from "./mpc/address-derivation.js";
 
 // EVM transaction building
 export {

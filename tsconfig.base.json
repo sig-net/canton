@@ -3,6 +3,10 @@
     "target": "ES2024",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "canton-sig": ["ts-packages/canton-sig/src/index.ts"]
+    },
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

@@ -3,10 +3,12 @@ import { DER } from "@noble/curves/abstract/weierstrass.js";
 import { keccak256, toBytes, numberToHex, type Hex } from "viem";
 import { sign } from "viem/accounts";
 import { computeResponseHash } from "../mpc/crypto.js";
+import { CANTON_RESPONSE_KEY_PATH, KEY_VERSION } from "../mpc/address-derivation.js";
 
 import { constants } from "signet.js";
 
-const EPSILON_DERIVATION_PREFIX = "sig.network v2.0.0 epsilon derivation";
+const EPSILON_DERIVATION_PREFIX_V1 = "sig.network v1.0.0 epsilon derivation";
+const EPSILON_DERIVATION_PREFIX_V2 = "sig.network v2.0.0 epsilon derivation";
 // KDF binds to SOURCE chain (canton:global), NOT destination EVM — must match Chain::Canton.caip2_chain_id() in Rust MPC node
 const KDF_CHAIN_ID = constants.KDF_CHAIN_IDS.CANTON;
 
@@ -16,14 +18,18 @@ const CURVE_ORDER = secp256k1.Point.Fn.ORDER;
 /**
  * Derive a child private key for signing EVM transactions.
  * childKey = (rootPrivateKey + epsilon) mod n
- * where epsilon = keccak256("{prefix}:canton:global:{predecessorId}:{path}")
+ * where epsilon follows Rust MPC's derive_epsilon_canton key-version dispatch.
  */
 export function deriveChildPrivateKey(
   rootPrivateKey: Hex,
   predecessorId: string,
   path: string,
+  keyVersion = KEY_VERSION,
 ): Hex {
-  const derivationPath = `${EPSILON_DERIVATION_PREFIX}:${KDF_CHAIN_ID}:${predecessorId}:${path}`;
+  const derivationPath =
+    keyVersion === 0
+      ? `${EPSILON_DERIVATION_PREFIX_V1},${KDF_CHAIN_ID},${predecessorId},${path}`
+      : `${EPSILON_DERIVATION_PREFIX_V2}:${KDF_CHAIN_ID}:${predecessorId}:${path}`;
   const epsilon = keccak256(toBytes(derivationPath));
 
   const rootKey = BigInt(rootPrivateKey);
@@ -49,17 +55,25 @@ export async function signEvmTxHash(
 type CantonSignature = { tag: "EcdsaSig"; value: { der: string; recoveryId: number } };
 
 /**
- * Sign the MPC response with the ROOT key (not the child). responseHash = keccak256(requestId ‖ mpcOutput).
- * requestId transitively encodes operatorsHash (via `sender`), so the signature binds to the full operator set.
+ * Sign the MPC response with the Canton response child key.
+ * responseHash = keccak256(requestId ‖ mpcOutput).
  */
 export async function signMpcResponse(
   rootPrivateKey: Hex,
+  predecessorId: string,
   requestId: string,
   mpcOutput: string,
+  keyVersion = KEY_VERSION,
 ): Promise<CantonSignature> {
+  const responsePrivateKey = deriveChildPrivateKey(
+    rootPrivateKey,
+    predecessorId,
+    CANTON_RESPONSE_KEY_PATH,
+    keyVersion,
+  );
   const sig = await sign({
     hash: computeResponseHash(requestId, mpcOutput),
-    privateKey: rootPrivateKey,
+    privateKey: responsePrivateKey,
   });
   // DER: Daml's secp256k1WithEcdsaOnly builtin only accepts DER-encoded sigs (no (r,s) variant)
   const der = DER.hexFromSig({ r: BigInt(sig.r), s: BigInt(sig.s) });

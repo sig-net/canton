@@ -39,6 +39,8 @@ export interface MpcServiceConfig {
 export interface PendingTx {
   requestId: string;
   signEventCid: string;
+  predecessorId: string;
+  keyVersion: number;
   signedTxHash: Hex;
   fromAddress: Hex;
   nonce: bigint;
@@ -181,7 +183,13 @@ export async function signAndEnqueue(
   const requestId = computedRequestId.slice(2);
 
   // Derive child key and sender address
-  const childPrivateKey = deriveChildPrivateKey(rootPrivateKey, predecessorId, requestPath);
+  const numericKeyVersion = Number(keyVersion);
+  const childPrivateKey = deriveChildPrivateKey(
+    rootPrivateKey,
+    predecessorId,
+    requestPath,
+    numericKeyVersion,
+  );
   const fromAddress = privateKeyToAddress(childPrivateKey);
   const txNonce = BigInt(`0x${evmTxParams.nonce}`);
 
@@ -208,6 +216,8 @@ export async function signAndEnqueue(
   return {
     requestId,
     signEventCid: event.contractId,
+    predecessorId,
+    keyVersion: numericKeyVersion,
     signedTxHash,
     fromAddress,
     nonce: txNonce,
@@ -301,7 +311,13 @@ async function reportOutcome(
   tx: PendingTx,
   mpcOutput: string,
 ): Promise<CheckResult> {
-  const signature = await signMpcResponse(config.rootPrivateKey, tx.requestId, mpcOutput);
+  const signature = await signMpcResponse(
+    config.rootPrivateKey,
+    tx.predecessorId,
+    tx.requestId,
+    mpcOutput,
+    tx.keyVersion,
+  );
 
   try {
     console.log(`[MPC] Exercising RespondBidirectional for requestId=${tx.requestId}`);
