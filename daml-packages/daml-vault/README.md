@@ -4,22 +4,24 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 ## Templates
 
-| Template | Signatory | Observer | Purpose |
-| --- | --- | --- | --- |
-| `VaultProposal` | `alreadySigned` | `allOperators` | Multi-party vault setup; each operator exercises `SignVault` until the set matches `allOperators`, then the choice returns the new `Vault` |
-| `Vault` | `operators` | `sigNetwork` | Per-deployment singleton; stores `evmVaultAddress`, `evmMpcPublicKey` (the **response-verification** child pubkey, derived off-ledger from the MPC root + `(operatorsHash, "canton response key")`), `vaultId` |
-| `PendingDeposit` | `operators` | `requester, sigNetwork` | Single-use anchor archived in `ClaimDeposit` |
-| `PendingWithdrawal` | `operators` | `requester, sigNetwork` | Single-use anchor archived in `CompleteWithdrawal`; carries the original holding fields for refund-on-failure |
-| `Erc20Holding` | `operators` | `owner` | On-ledger ERC-20 balance. `sigNetwork` is intentionally **not** an observer — the MPC layer is decoupled from domain custody |
+| Template            | Signatory       | Observer                | Purpose                                                                                                                                                                                                        |
+| ------------------- | --------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VaultProposal`     | `alreadySigned` | `allOperators`          | Multi-party vault setup; each operator exercises `SignVault` until the set matches `allOperators`, then the choice returns the new `Vault`                                                                     |
+| `Vault`             | `operators`     | `sigNetwork`            | Per-deployment singleton; stores `evmVaultAddress`, `evmMpcPublicKey` (the **response-verification** child pubkey, derived off-ledger from the MPC root + `(operatorsHash, "canton response key")`), `vaultId` |
+| `PendingDeposit`    | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `ClaimDeposit`                                                                                                                                                                   |
+| `PendingWithdrawal` | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `CompleteWithdrawal`; carries the original holding fields for refund-on-failure                                                                                                  |
+| `Erc20Holding`      | `operators`     | `owner`                 | On-ledger ERC-20 balance. `sigNetwork` is intentionally **not** an observer — the MPC layer is decoupled from domain custody                                                                                   |
 
 ## Choices
 
 `Vault.RequestDeposit` (controller `requester`):
+
 1. Validates `evmTxParams.calldata` is exactly `transfer(address,uint256)` (selector `a9059cbb`, two ABI slots, recipient = `evmVaultAddress`, no trailing bytes), and `evmTxParams.to = Some <token>`.
 2. Builds `path = "${vaultId},${requester},${userPath}"` so the deposit address is namespaced per vault and per user.
 3. In one tx: creates `SignRequest` → exercises `Signer.SignBidirectional` (which runs `Execute` to emit `SignBidirectionalEvent`) → creates `PendingDeposit` carrying `requestId`.
 
 `Vault.ClaimDeposit` (controller `requester`):
+
 1. Archives `PendingDeposit` first (single-use guard against MPC-outcome replay).
 2. Cross-checks operators / requester / `requestId` between pending, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`.
 3. Verifies the MPC outcome signature against `evmMpcPublicKey`: `secp256k1WithEcdsaOnly(sigDer, keccak256(requestId ‖ serializedOutput), evmMpcPublicKey)`.
@@ -28,6 +30,7 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 6. Decodes the amount from `pending.evmTxParams.calldata` slot 1 and creates `Erc20Holding`.
 
 `Vault.RequestWithdrawal` (controller `requester`):
+
 1. Validates the same calldata shape; also checks `evmTxParams.to == Some holding.erc20Address`, the recipient ABI slot equals the supplied `recipientAddress`, and the amount equals `holding.amount`.
 2. **Archives the holding first** (optimistic debit). If MPC reports failure, `CompleteWithdrawal` recreates it.
 3. Builds `path = "${vaultId},root"` (the vault sweep address — same as the address tokens were originally deposited to).
@@ -53,8 +56,8 @@ import { encodeAbiParameters, parseAbiParameters } from "viem";
 
 const args = encodeAbiParameters(
   parseAbiParameters("address, uint256"),
-  [vaultAddress, amount],          // vaultAddress is `0x...`; amount is bigint
-).slice(2);                        // drop 0x for Canton-format hex
+  [vaultAddress, amount], // vaultAddress is `0x...`; amount is bigint
+).slice(2); // drop 0x for Canton-format hex
 const calldata = `a9059cbb${args}`;
 ```
 

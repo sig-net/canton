@@ -19,7 +19,7 @@ You will receive:
 2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`.
 3. The MPC **root** secp256k1 public key (uncompressed, hex). Two children are derived from it via the Canton KDF (`ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`):
    - The **EVM child** for the deposit / sweep address (path = `${vaultId},${requester},${userPath}` for deposits, `${vaultId},root` for the sweep). Computed via `deriveDepositAddress`.
-   - The **response-verification child** for outcome verification (constant path `"canton response key"`, stored on `Vault.evmMpcPublicKey`). The Vault operator computes this when creating the Vault — the integrator can recompute and assert equality before trusting the contract.
+   - The **response-verification child** for outcome verification (constant path `"canton response key"`, stored on `Vault.evmMpcPublicKey`). The Vault operator computes this when creating the Vault via `deriveResponseVerificationPublicKey` + `toSpkiPublicKey` — the integrator can recompute and assert equality before trusting the contract.
 
 ## Quick start (deposit round-trip)
 
@@ -125,7 +125,7 @@ const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 `canton-sig` is a thin client; the on-ledger Daml contracts enforce custody. The TS side is responsible for:
 
 - **Use disclosed contracts.** Pass `[vaultDisclosure, signerDisclosure]` on every exercise that touches `Vault` / `Signer`. Without them, the choice fails.
-- **Never trust `SignatureRespondedEvent.signature` alone** as proof of execution. Broadcast the resulting tx; wait for the EVM receipt; *then* wait for `RespondBidirectionalEvent` (signed over the outcome) before exercising `ClaimDeposit` / `CompleteWithdrawal`. The Daml verification is what makes the outcome safe to act on.
+- **Never trust `SignatureRespondedEvent.signature` alone** as proof of execution. Broadcast the resulting tx; wait for the EVM receipt; _then_ wait for `RespondBidirectionalEvent` (signed over the outcome) before exercising `ClaimDeposit` / `CompleteWithdrawal`. The Daml verification is what makes the outcome safe to act on.
 - **Treat `SEPOLIA_RPC_URL` (or any destination-chain RPC) as untrusted.** Validate the receipt status, confirmations as your domain requires.
 - **Recompute `requestId` and the deposit address with the helpers and assert they match the values inside `PendingDeposit` / your `Vault` instance.** If they don't, something out-of-band changed (operator set, vaultId, path) — abort.
 - **Path namespacing.** `path` must be unique per `(vault, user, sub-path)` — sharing across users gives them the same deposit address. The Vault enforces the `${vaultId},${requester},${userPath}` shape, but your TS side must pass a meaningful `userPath`.
@@ -155,26 +155,29 @@ Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 
 ### Crypto / KDF
 
-| Export | Purpose |
-| --- | --- |
-| `computeRequestId(sender, txParams, caip2Id, keyVersion, path, algo, dest, params)` | Mirror of `RequestId.computeRequestId` — returns `0x`-prefixed `Hex` |
-| `computeResponseHash(requestId, mpcOutput)` | `keccak256(requestId ‖ output)` |
-| `hashEvmType2Params(p)` | Per-tx-type field hash used inside `requestId` |
-| `deriveDepositAddress(rootPubKey, predecessorId, path, keyVersion = 1)` | Child EVM address from MPC root pubkey |
-| `toSpkiPublicKey(uncompressedPubKey)` | SPKI envelope. Wrap the **response-verification child pubkey** (not the root) before storing as `Vault.evmMpcPublicKey`. |
-| `derivePublicKey(privateKey)` | Uncompressed pubkey hex (no `0x`) |
-| `chainIdHexToCaip2(chainIdHex)` | Canton-format chainId hex → `"eip155:<decimal>"` |
-| `KEY_VERSION` | `1` |
+| Export                                                                              | Purpose                                                                                                                  |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `computeRequestId(sender, txParams, caip2Id, keyVersion, path, algo, dest, params)` | Mirror of `RequestId.computeRequestId` — returns `0x`-prefixed `Hex`                                                     |
+| `computeResponseHash(requestId, mpcOutput)`                                         | `keccak256(requestId ‖ output)`                                                                                          |
+| `hashEvmType2Params(p)`                                                             | Per-tx-type field hash used inside `requestId`                                                                           |
+| `deriveCantonPublicKey(rootPubKey, predecessorId, path, keyVersion = 1)`            | Child secp256k1 public key from the Canton KDF                                                                           |
+| `deriveDepositAddress(rootPubKey, predecessorId, path, keyVersion = 1)`             | Child EVM address from MPC root pubkey                                                                                   |
+| `deriveResponseVerificationPublicKey(rootPubKey, predecessorId, keyVersion = 1)`    | Child pubkey for `RespondBidirectionalEvent.signature` verification (`path = "canton response key"`)                     |
+| `toSpkiPublicKey(uncompressedPubKey)`                                               | SPKI envelope. Wrap the **response-verification child pubkey** (not the root) before storing as `Vault.evmMpcPublicKey`. |
+| `derivePublicKey(privateKey)`                                                       | Uncompressed pubkey hex (no `0x`)                                                                                        |
+| `chainIdHexToCaip2(chainIdHex)`                                                     | Canton-format chainId hex → `"eip155:<decimal>"`                                                                         |
+| `CANTON_RESPONSE_KEY_PATH`                                                          | Constant response-verification key path (`"canton response key"`)                                                        |
+| `KEY_VERSION`                                                                       | `1`                                                                                                                      |
 
 ### EVM tx
 
-| Export | Purpose |
-| --- | --- |
-| `buildTxRequest(p)` | Canton params → viem-shaped `Eip1559TxFields` |
-| `serializeUnsignedTx(p)` | RLP-encoded unsigned tx bytes |
-| `reconstructSignedTx(p, { r, s, v })` | RLP-encoded signed tx for `eth_sendRawTransaction` |
-| `submitRawTransaction(rpcUrl, raw)` | POSTs `eth_sendRawTransaction`, returns the tx hash |
-| `cantonHexToHex(s)` / `toCantonHex(value, bytes)` | Format adapters |
+| Export                                            | Purpose                                             |
+| ------------------------------------------------- | --------------------------------------------------- |
+| `buildTxRequest(p)`                               | Canton params → viem-shaped `Eip1559TxFields`       |
+| `serializeUnsignedTx(p)`                          | RLP-encoded unsigned tx bytes                       |
+| `reconstructSignedTx(p, { r, s, v })`             | RLP-encoded signed tx for `eth_sendRawTransaction`  |
+| `submitRawTransaction(rpcUrl, raw)`               | POSTs `eth_sendRawTransaction`, returns the tx hash |
+| `cantonHexToHex(s)` / `toCantonHex(value, bytes)` | Format adapters                                     |
 
 ### Streaming + event utilities
 

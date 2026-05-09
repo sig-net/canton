@@ -5,6 +5,7 @@ import {
   findCreated,
   chainIdHexToCaip2,
   deriveDepositAddress,
+  deriveResponseVerificationPublicKey,
   computeRequestId,
   toSpkiPublicKey,
   reconstructSignedTx,
@@ -140,7 +141,12 @@ export async function setupVault(
   );
 
   // Create Vault contract (signatory: operators=[operator])
-  const mpcPubKeySpki = toSpkiPublicKey(env.MPC_ROOT_PUBLIC_KEY);
+  const responseVerificationPubKey = deriveResponseVerificationPublicKey(
+    env.MPC_ROOT_PUBLIC_KEY,
+    predecessorId,
+    KEY_VERSION,
+  );
+  const mpcPubKeySpki = toSpkiPublicKey(responseVerificationPubKey);
   const vaultResult = await canton.createContract(userId, [operator], VAULT_TEMPLATE, {
     operators: [operator],
     sigNetwork,

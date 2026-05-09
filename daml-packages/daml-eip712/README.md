@@ -8,13 +8,13 @@ Used by [`daml-signer`](../daml-signer/README.md)'s `RequestId.daml`. Any off-Ca
 
 ## Encoding rules
 
-| Field type | Helper | Bytes |
-| --- | --- | --- |
-| `string` | `eip712EncodeString : Text -> BytesHex` | `keccak256(utf8(text))` (32 bytes; `"" → keccak256Empty`) |
-| `uint256` | `eip712EncodeUint256 : BytesHex -> BytesHex` | left-pad hex to 32 bytes |
-| `address` | `eip712EncodeAddress : BytesHex -> BytesHex` | left-pad hex to 32 bytes |
-| `bytes` | `eip712EncodeBytes : BytesHex -> BytesHex` | `keccak256(rawBytes)` (32 bytes; `"" → keccak256Empty`) |
-| `bytes[]` | `eip712EncodeBytesArray : [BytesHex] -> BytesHex` | `keccak256(concat (map keccak256 items))` (32 bytes; `[] → keccak256Empty`) |
+| Field type | Helper                                            | Bytes                                                                       |
+| ---------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| `string`   | `eip712EncodeString : Text -> BytesHex`           | `keccak256(utf8(text))` (32 bytes; `"" → keccak256Empty`)                   |
+| `uint256`  | `eip712EncodeUint256 : BytesHex -> BytesHex`      | left-pad hex to 32 bytes                                                    |
+| `address`  | `eip712EncodeAddress : BytesHex -> BytesHex`      | left-pad hex to 32 bytes                                                    |
+| `bytes`    | `eip712EncodeBytes : BytesHex -> BytesHex`        | `keccak256(rawBytes)` (32 bytes; `"" → keccak256Empty`)                     |
+| `bytes[]`  | `eip712EncodeBytesArray : [BytesHex] -> BytesHex` | `keccak256(concat (map keccak256 items))` (32 bytes; `[] → keccak256Empty`) |
 
 `safeKeccak256` is the empty-input-aware keccak; it returns the precomputed `keccak256("")` value (`keccak256Empty`) instead of failing on `""`. Use it whenever an input may legitimately be empty.
 
@@ -75,4 +75,3 @@ myCommitment : Text -> BytesHex -> BytesHex
 myCommitment label amount =
   keccak256 (eip712EncodeString label <> eip712EncodeUint256 amount)
 ```
-

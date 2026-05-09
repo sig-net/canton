@@ -6,6 +6,36 @@ const { deriveChildPublicKey } = utils.cryptography;
 const KDF_CHAIN_ID = constants.KDF_CHAIN_IDS.CANTON;
 
 export const KEY_VERSION = 1;
+export const CANTON_RESPONSE_KEY_PATH = "canton response key";
+
+/**
+ * Derive an uncompressed secp256k1 child public key from MPC root key + Canton KDF params.
+ */
+export function deriveCantonPublicKey(
+  rootPubKey: string, // "04..." uncompressed secp256k1 (no 0x)
+  predecessorId: string,
+  path: string,
+  keyVersion = KEY_VERSION,
+): string {
+  return deriveChildPublicKey(
+    rootPubKey as `04${string}`,
+    predecessorId,
+    path,
+    KDF_CHAIN_ID,
+    keyVersion,
+  );
+}
+
+/**
+ * Derive the public key that verifies RespondBidirectionalEvent outcome signatures.
+ */
+export function deriveResponseVerificationPublicKey(
+  rootPubKey: string,
+  predecessorId: string,
+  keyVersion = KEY_VERSION,
+): string {
+  return deriveCantonPublicKey(rootPubKey, predecessorId, CANTON_RESPONSE_KEY_PATH, keyVersion);
+}
 
 /**
  * Derive an Ethereum deposit address from MPC root key + derivation params.
@@ -17,13 +47,7 @@ export function deriveDepositAddress(
   path: string,
   keyVersion = KEY_VERSION,
 ): Hex {
-  const childPubKey = deriveChildPublicKey(
-    rootPubKey as `04${string}`,
-    predecessorId,
-    path,
-    KDF_CHAIN_ID,
-    keyVersion,
-  );
+  const childPubKey = deriveCantonPublicKey(rootPubKey, predecessorId, path, keyVersion);
   return publicKeyToAddress(`0x${childPubKey}`);
 }
 

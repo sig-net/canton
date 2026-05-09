@@ -3,16 +3,38 @@ import { keccak256, toBytes } from "viem";
 import { recoverAddress } from "viem";
 import { privateKeyToAddress } from "viem/accounts";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { signEvmTxHash, signMpcResponse } from "../src/mpc-service/signer.js";
+import { utils, constants } from "signet.js";
+import {
+  deriveChildPrivateKey,
+  signEvmTxHash,
+  signMpcResponse,
+} from "../src/mpc-service/signer.js";
 import { computeResponseHash } from "../src/mpc/crypto.js";
 import { chainIdHexToCaip2 } from "../src/mpc/address-derivation.js";
+
+const { deriveChildPublicKey } = utils.cryptography;
 
 // Hardhat account #0 — well-known test key
 const TEST_PRIVATE_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
+const ZERO_PRIVATE_KEY = `0x${"0".repeat(64)}` as const;
+const PREDECESSOR_ID = "operators-hash";
+const CANTON_RESPONSE_KEY_PATH = "canton response key";
 
 // Arbitrary 32-byte hash for signing tests
 const TEST_TX_HASH = keccak256(toBytes("test-transaction"));
+
+describe("deriveChildPrivateKey", () => {
+  it("matches Rust derive_epsilon_canton vectors", () => {
+    // A zero root scalar isolates epsilon. Do not use it as a real private key.
+    expect(deriveChildPrivateKey(ZERO_PRIVATE_KEY, "sender", "path", 0)).toBe(
+      "0xa4cfd19807d1968daada88b5b812ad61c62408b484b551fc373034510314614c",
+    );
+    expect(deriveChildPrivateKey(ZERO_PRIVATE_KEY, "sender", "path", 1)).toBe(
+      "0x490593a100eae126988f3ba4ec3abd754cd24cd9a66b1471276a1bc3e310cabd",
+    );
+  });
+});
 
 describe("signEvmTxHash", () => {
   it("returns r, s, v with correct formats", async () => {
@@ -53,7 +75,7 @@ describe("signMpcResponse", () => {
   const mpcOutput = "deadbeef";
 
   it("returns CantonSignature with DER-encoded hex starting with '30'", async () => {
-    const sig = await signMpcResponse(TEST_PRIVATE_KEY, requestId, mpcOutput);
+    const sig = await signMpcResponse(TEST_PRIVATE_KEY, PREDECESSOR_ID, requestId, mpcOutput);
 
     expect(sig.tag).toBe("EcdsaSig");
     // DER-encoded ECDSA signature starts with SEQUENCE tag 0x30
@@ -67,26 +89,40 @@ describe("signMpcResponse", () => {
   });
 
   it("is deterministic", async () => {
-    const sig1 = await signMpcResponse(TEST_PRIVATE_KEY, requestId, mpcOutput);
-    const sig2 = await signMpcResponse(TEST_PRIVATE_KEY, requestId, mpcOutput);
+    const sig1 = await signMpcResponse(TEST_PRIVATE_KEY, PREDECESSOR_ID, requestId, mpcOutput);
+    const sig2 = await signMpcResponse(TEST_PRIVATE_KEY, PREDECESSOR_ID, requestId, mpcOutput);
 
     expect(sig1).toEqual(sig2);
   });
 
-  it("verifies against the root public key", async () => {
-    const sig = await signMpcResponse(TEST_PRIVATE_KEY, requestId, mpcOutput);
+  it("verifies against the Canton response child key, not the root public key", async () => {
+    const sig = await signMpcResponse(TEST_PRIVATE_KEY, PREDECESSOR_ID, requestId, mpcOutput);
     const derBytes = Uint8Array.from(Buffer.from(sig.value.der, "hex"));
-    // Derive uncompressed public key from the private key
-    const pubKey = secp256k1.getPublicKey(toBytes(TEST_PRIVATE_KEY), false);
-    // Compute the response hash the same way the function does internally
     const responseHash = computeResponseHash(requestId, mpcOutput);
-    // v2.0 verify: DER format + prehash: false since responseHash is already keccak256'd
+    const rootPubKey = secp256k1.getPublicKey(toBytes(TEST_PRIVATE_KEY), false);
+    const rootPubKeyHex = Buffer.from(rootPubKey).toString("hex") as `04${string}`;
+
+    const responsePubKey = deriveChildPublicKey(
+      rootPubKeyHex,
+      PREDECESSOR_ID,
+      CANTON_RESPONSE_KEY_PATH,
+      constants.KDF_CHAIN_IDS.CANTON,
+      1,
+    );
+
     expect(
-      secp256k1.verify(derBytes, toBytes(responseHash), pubKey, {
+      secp256k1.verify(derBytes, toBytes(responseHash), Buffer.from(responsePubKey, "hex"), {
         format: "der",
         prehash: false,
       }),
     ).toBe(true);
+
+    expect(
+      secp256k1.verify(derBytes, toBytes(responseHash), rootPubKey, {
+        format: "der",
+        prehash: false,
+      }),
+    ).toBe(false);
   });
 });
 
