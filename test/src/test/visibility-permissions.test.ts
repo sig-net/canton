@@ -132,12 +132,12 @@ describe("ledger visibility + permission model", () => {
       predecessorId,
       KEY_VERSION,
     );
-    const mpcPubKeySpki = toSpkiPublicKey(responseVerificationPubKey);
+    const mpcResponseVerifyKey = toSpkiPublicKey(responseVerificationPubKey);
     const vaultResult = await canton.createContract(OPERATOR_USER, [operator], VAULT_TEMPLATE, {
       operators: [operator],
       sigNetwork,
       evmVaultAddress: vaultAddress.slice(2).toLowerCase().padStart(64, "0"),
-      evmMpcPublicKey: mpcPubKeySpki,
+      mpcResponseVerifyKey,
       vaultId: VAULT_ID,
     });
     vaultCid = firstCreated(vaultResult.transaction.events).contractId;

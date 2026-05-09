@@ -146,12 +146,12 @@ export async function setupVault(
     predecessorId,
     KEY_VERSION,
   );
-  const mpcPubKeySpki = toSpkiPublicKey(responseVerificationPubKey);
+  const mpcResponseVerifyKey = toSpkiPublicKey(responseVerificationPubKey);
   const vaultResult = await canton.createContract(userId, [operator], VAULT_TEMPLATE, {
     operators: [operator],
     sigNetwork,
     evmVaultAddress: vaultAddressPadded,
-    evmMpcPublicKey: mpcPubKeySpki,
+    mpcResponseVerifyKey,
     vaultId,
   });
   const vaultEvent = findCreated(vaultResult.transaction.events, "Vault");

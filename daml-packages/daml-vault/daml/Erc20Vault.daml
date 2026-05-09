@@ -128,7 +128,7 @@ template VaultProposal
     alreadySigned   : [Party]
     sigNetwork      : Party
     evmVaultAddress : BytesHex
-    evmMpcPublicKey : PublicKeyHex
+    mpcResponseVerifyKey : PublicKeyHex
     vaultId         : Text
   where
     signatory alreadySigned
@@ -145,7 +145,7 @@ template VaultProposal
         if sameOperatorSet newSigned allOperators
           then Right <$> create Vault with
             operators = allOperators; sigNetwork
-            evmVaultAddress; evmMpcPublicKey; vaultId
+            evmVaultAddress; mpcResponseVerifyKey; vaultId
           else Left <$> create this with alreadySigned = newSigned
 
 -- ---------------------------------------------------------------------------
@@ -157,7 +157,7 @@ template Vault
     operators       : [Party]
     sigNetwork      : Party
     evmVaultAddress : BytesHex
-    evmMpcPublicKey : PublicKeyHex
+    mpcResponseVerifyKey : PublicKeyHex
     vaultId         : Text
   where
     signatory operators
@@ -238,7 +238,7 @@ template Vault
 
         let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
         assertMsg "Invalid MPC signature"
-          (secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash evmMpcPublicKey)
+          (secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash mpcResponseVerifyKey)
 
         assertMsg "MPC reported ETH transaction failure"
           (not (abiHasErrorPrefix outcome.serializedOutput))
@@ -339,7 +339,7 @@ template Vault
 
         let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
         assertMsg "Invalid MPC signature"
-          (secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash evmMpcPublicKey)
+          (secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash mpcResponseVerifyKey)
 
         exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
         exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester

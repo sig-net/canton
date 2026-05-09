@@ -4,13 +4,21 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 ## Templates
 
-| Template            | Signatory       | Observer                | Purpose                                                                                                                                                                                                                              |
-| ------------------- | --------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `VaultProposal`     | `alreadySigned` | `allOperators`          | Multi-party vault setup; each operator exercises `SignVault` until the set matches `allOperators`, then the choice returns the new `Vault`                                                                                           |
-| `Vault`             | `operators`     | `sigNetwork`            | Per-deployment singleton; stores `evmVaultAddress`, `evmMpcPublicKey` (the **response-verification** child pubkey, derived off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"`), `vaultId` |
-| `PendingDeposit`    | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `ClaimDeposit`                                                                                                                                                                                         |
-| `PendingWithdrawal` | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `CompleteWithdrawal`; carries the original holding fields for refund-on-failure                                                                                                                        |
-| `Erc20Holding`      | `operators`     | `owner`                 | On-ledger ERC-20 balance. `sigNetwork` is intentionally **not** an observer — the MPC layer is decoupled from domain custody                                                                                                         |
+| Template            | Signatory       | Observer                | Purpose                                                                                                                                                                                                                                   |
+| ------------------- | --------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VaultProposal`     | `alreadySigned` | `allOperators`          | Multi-party vault setup; each operator exercises `SignVault` until the set matches `allOperators`, then the choice returns the new `Vault`                                                                                                |
+| `Vault`             | `operators`     | `sigNetwork`            | Per-deployment singleton; stores `evmVaultAddress`, `mpcResponseVerifyKey` (the **response-verification** child pubkey, derived off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"`), `vaultId` |
+| `PendingDeposit`    | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `ClaimDeposit`                                                                                                                                                                                              |
+| `PendingWithdrawal` | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `CompleteWithdrawal`; carries the original holding fields for refund-on-failure                                                                                                                             |
+| `Erc20Holding`      | `operators`     | `owner`                 | On-ledger ERC-20 balance. `sigNetwork` is intentionally **not** an observer — the MPC layer is decoupled from domain custody                                                                                                              |
+
+## Parties
+
+| Party        | Role                              | Owns                                |
+| ------------ | --------------------------------- | ----------------------------------- |
+| `sigNetwork` | MPC infrastructure party          | `Signer` and MPC response contracts |
+| `operators`  | Vault operator set                | `Vault`, pending anchors, holdings  |
+| `requester`  | End user for a deposit/withdrawal | Request flow and owned holdings     |
 
 ## Choices
 
@@ -24,7 +32,7 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 1. Archives `PendingDeposit` first (single-use guard against MPC-outcome replay).
 2. Cross-checks operators / requester / `requestId` between pending, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`.
-3. Verifies the MPC outcome signature against `evmMpcPublicKey`: `secp256k1WithEcdsaOnly(sigDer, keccak256(requestId ‖ serializedOutput), evmMpcPublicKey)`.
+3. Verifies the MPC outcome signature against `mpcResponseVerifyKey`: `secp256k1WithEcdsaOnly(sigDer, keccak256(requestId ‖ serializedOutput), mpcResponseVerifyKey)`.
 4. Rejects if the output starts with the `deadbeef` error prefix or ABI-decodes to `bool(false)`.
 5. Calls `Consume_RespondBidirectional` / `Consume_SignatureResponded` (the requester lacks `sigNetwork` authority to archive directly).
 6. Decodes the amount from `pending.evmTxParams.calldata` slot 1 and creates `Erc20Holding`.
@@ -39,6 +47,143 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 `Vault.CompleteWithdrawal` (controller `requester`): same verification block as `ClaimDeposit`. Returns `Some Erc20Holding` (refund) when the MPC reports a revert / `bool(false)`, `None` on success.
 
 `VaultProposal.SignVault` (controller `signer`): adds `signer` to `alreadySigned`. When the set matches `allOperators` (sort-equal — order-independent), returns `Right (ContractId Vault)`; otherwise `Left (ContractId VaultProposal)`.
+
+## Deposit lifecycle
+
+The deposit flow mirrors the usual centralized-exchange pattern: a user funds a derived deposit address, the vault sweeps those tokens to the shared vault address, and Canton mints an `Erc20Holding` only after the MPC outcome is verified on-ledger.
+
+1. Derive addresses off-ledger from the MPC root public key with `sender = operatorsHash`.
+   - Deposit address path: `${vaultId},${requester},${userPath}`.
+   - Vault sweep address path: `${vaultId},root`; store this as `Vault.evmVaultAddress` in ABI address-slot form.
+2. The user funds the deposit address on the destination chain with the ERC-20 token and enough native gas for the sweep.
+3. The user exercises `Vault.RequestDeposit`, passing EIP-1559 params for `transfer(vaultAddress, amount)` against the ERC-20 contract.
+4. `RequestDeposit` validates calldata, creates `SignRequest`, exercises `Signer.SignBidirectional`, fetches the resulting `SignBidirectionalEvent`, computes `requestId`, and creates `PendingDeposit`.
+5. The MPC service observes `SignBidirectionalEvent`, signs the request-specific digest with the child key for the request path, and creates `SignatureRespondedEvent`.
+6. The client reads `SignatureRespondedEvent`, reconstructs the signed EIP-1559 transaction, and submits it to the destination chain.
+7. After the receipt is observable, the MPC service publishes `RespondBidirectionalEvent` with `serializedOutput` and a response signature made by the response-verification child key.
+8. The user exercises `Vault.ClaimDeposit`. The choice archives `PendingDeposit`, cross-checks both MPC evidence contracts, verifies `RespondBidirectionalEvent.signature` against `mpcResponseVerifyKey`, rejects failures or `bool(false)`, consumes both evidence contracts, and creates `Erc20Holding`.
+
+```text
+  Sender / requester              Vault (operators)               Signer (sigNetwork)             MPC service                     Destination chain
+|                               |                               |                               |                               |                               |
+| 1. fund deposit address       |                               |                               |                               | ERC20 transfer                |
+|------------------------------------------------------------------------------------------------------------------------------>|                               |
+|                               |                               |                               |                               |                               |
+| 2. RequestDeposit             |                               |                               |                               |                               |
+|------------------------------>|                               |                               |                               |                               |
+|                               | validate calldata             |                               |                               |                               |
+|                               | create SignRequest            |                               |                               |                               |
+|                               | SignRequest                   | SignBidirectional             |                               |                               |
+|                               |------------------------------>|                               |                               |                               |
+|                               | create PendingDeposit         | SignRequest.Execute           |                               |                               |
+|                               |                               | SignBidirectionalEvent        |                               |                               |
+|                               |                               |                               |                               |                               |
+|                               |                               |                               | 3. observe event              |                               |
+|                               |                               |                               | derive request key            |                               |
+|                               |                               |                               | threshold-sign request        |                               |
+|                               |                               |                               |                               |                               |
+|                               |                               | Respond                       | 4. create                     |                               |
+|                               |                               |<------------------------------|                               |                               |
+|                               |                               | SignatureRespondedEvent       |                               |                               |
+|                               |                               |                               |                               |                               |
+| 5. read                       |                               |                               |                               |                               |
+| SignatureRespondedEvent       |                               |                               |                               |                               |
+| reconstructSignedTx           |                               |                               |                               | eth_sendRawTransaction        |
+|                               |                               |                               |                               | sweep funds to vault address  |
+|------------------------------------------------------------------------------------------------------------------------------>|                               |
+|                               |                               |                               |                               |                               |
+|                               |                               |                               | 6. poll receipt               | receipt observable            |
+|                               |                               |                               | re-simulate call              |                               |
+|                               |                               |                               |                               |                               |
+|                               |                               | RespondBidirectional          | 7. create                     |                               |
+|                               |                               |<------------------------------|                               |                               |
+|                               |                               | RespondBidirectionalEvent     |                               |                               |
+|                               |                               |                               |                               |                               |
+| 8. ClaimDeposit               |                               |                               |                               |                               |
+|------------------------------>|                               |                               |                               |                               |
+|                               | archive PendingDeposit        |                               |                               |                               |
+|                               | validate evidence contracts   |                               |                               |                               |
+|                               | verify response signature     |                               |                               |                               |
+|                               | via mpcResponseVerifyKey      |                               |                               |                               |
+|                               | Consume_RespondBidirectional  |                               |                               |                               |
+|                               | Consume_SignatureResponded    |                               |                               |                               |
+|                               | create Erc20Holding           |                               |                               |                               |
+|<------------------------------|                               |                               |                               |                               |
+| Erc20Holding                  |                               |                               |                               |                               |
+```
+
+## Withdrawal lifecycle
+
+The withdrawal flow spends a user's Canton holding by signing an ERC-20 transfer from the shared vault address. It uses optimistic debit: the holding is archived before signing, then recreated only if the destination-chain outcome reports failure.
+
+1. The user exercises `Vault.RequestWithdrawal` with an owned `Erc20Holding`, a recipient ABI address slot, and EIP-1559 params for `transfer(recipient, amount)`.
+2. `RequestWithdrawal` verifies holding owner, operator set, token address, amount, recipient, calldata shape, and token contract recipient.
+3. The choice archives the holding, then creates `SignRequest`, exercises `Signer.SignBidirectional`, fetches the `SignBidirectionalEvent`, computes `requestId`, and creates `PendingWithdrawal`.
+4. The signing path is `${vaultId},root`, so the signed transaction spends from the shared vault address.
+5. The MPC service and client follow the same response flow as deposit: `SignatureRespondedEvent` carries the request signature, the client submits the signed transaction, and `RespondBidirectionalEvent` carries the verified outcome bytes.
+6. The user exercises `Vault.CompleteWithdrawal`. The choice archives `PendingWithdrawal`, cross-checks both MPC evidence contracts, verifies the response signature against `mpcResponseVerifyKey`, and consumes both evidence contracts.
+7. On success (`serializedOutput` does not start with `deadbeef` and ABI-decodes to `bool(true)`), the withdrawal is final and the choice returns `None`.
+8. On failure or `bool(false)`, the choice recreates the archived `Erc20Holding` with the original owner, token address, and amount, then returns `Some refundCid`.
+
+```text
+  Sender / requester              Vault (operators)               Signer (sigNetwork)             MPC service                     Destination chain
+|                               |                               |                               |                               |                               |
+| 1. RequestWithdrawal          |                               |                               |                               |                               |
+|------------------------------>|                               |                               |                               |                               |
+|                               | validate holding + calldata   |                               |                               |                               |
+|                               | archive Erc20Holding          |                               |                               |                               |
+|                               | create SignRequest            |                               |                               |                               |
+|                               | SignRequest                   | SignBidirectional             |                               |                               |
+|                               |------------------------------>|                               |                               |                               |
+|                               | create PendingWithdrawal      | SignRequest.Execute           |                               |                               |
+|                               |                               | SignBidirectionalEvent        |                               |                               |
+|                               |                               |                               |                               |                               |
+|                               |                               |                               | 2. observe event              |                               |
+|                               |                               |                               | derive vault key              |                               |
+|                               |                               |                               | threshold-sign request        |                               |
+|                               |                               |                               |                               |                               |
+|                               |                               | Respond                       | 3. create                     |                               |
+|                               |                               |<------------------------------|                               |                               |
+|                               |                               | SignatureRespondedEvent       |                               |                               |
+|                               |                               |                               |                               |                               |
+| 4. read                       |                               |                               |                               |                               |
+| SignatureRespondedEvent       |                               |                               |                               |                               |
+| reconstructSignedTx           |                               |                               |                               | eth_sendRawTransaction        |
+|                               |                               |                               |                               | transfer funds to recipient   |
+|------------------------------------------------------------------------------------------------------------------------------>|                               |
+|                               |                               |                               |                               |                               |
+|                               |                               |                               | 5. poll receipt               | receipt observable            |
+|                               |                               |                               | re-simulate call              |                               |
+|                               |                               |                               |                               |                               |
+|                               |                               | RespondBidirectional          | 6. create                     |                               |
+|                               |                               |<------------------------------|                               |                               |
+|                               |                               | RespondBidirectionalEvent     |                               |                               |
+|                               |                               |                               |                               |                               |
+| 7. CompleteWithdrawal         |                               |                               |                               |                               |
+|------------------------------>|                               |                               |                               |                               |
+|                               | archive PendingWithdrawal     |                               |                               |                               |
+|                               | validate evidence contracts   |                               |                               |                               |
+|                               | verify response signature     |                               |                               |                               |
+|                               | via mpcResponseVerifyKey      |                               |                               |                               |
+|                               | Consume_RespondBidirectional  |                               |                               |                               |
+|                               | Consume_SignatureResponded    |                               |                               |                               |
+|                               | success -> None               |                               |                               |                               |
+|                               | failure -> Erc20Holding       |                               |                               |                               |
+|<------------------------------|                               |                               |                               |                               |
+| result                        |                               |                               |                               |                               |
+```
+
+## MPC outcome bytes
+
+`RespondBidirectionalEvent.serializedOutput` is interpreted by the vault claim choices:
+
+| Outcome                            | Encoding                                                                          | Vault behavior                                  |
+| ---------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------- |
+| ERC-20 call succeeded              | ABI-encoded return data, expected to decode as `bool(true)` for `transfer`        | `ClaimDeposit` mints; `CompleteWithdrawal` ends |
+| ERC-20 call returned `bool(false)` | ABI-encoded `bool(false)`                                                         | deposit rejects; withdrawal refunds             |
+| EVM tx reverted/replaced/failed    | `deadbeef` prefix followed by an ABI-encoded payload reserved for failure details | deposit rejects; withdrawal refunds             |
+
+The response signature is over `keccak256(requestId ‖ serializedOutput)`. The request signature in `SignatureRespondedEvent` is not treated as proof of execution; the vault only mutates state after verifying the signed response outcome.
 
 ## Calldata shape (deposit + withdrawal)
 
@@ -64,7 +209,7 @@ const calldata = `a9059cbb${args}`;
 ## Security invariants
 
 - `sigNetwork` is **not** an observer of `Erc20Holding`. Compromising the MPC participant cannot leak the domain ledger.
-- All four Pending\* lifecycle templates are signed only by `operators` — `sigNetwork` cannot fabricate a pending claim.
+- Both Pending\* lifecycle templates are signed only by `operators` — `sigNetwork` cannot fabricate a pending claim.
 - `Vault` and `VaultProposal` reject any `evmVaultAddress` whose high 12 bytes are non-zero (`isAbiAddressSlot`); same check on withdrawal `recipientAddress`. Prevents accidental dirty-padding from changing the recipient on EVM.
 - `RequestDeposit` requires `transfer(address,uint256)` with recipient = `evmVaultAddress` and exactly two ABI slots. Anything else aborts before signing.
 - `RequestWithdrawal` requires `transfer(address,uint256)` to the holding's token address with recipient = supplied `recipientAddress` and amount = `holding.amount` exactly.
