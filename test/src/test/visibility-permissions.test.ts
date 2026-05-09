@@ -15,6 +15,7 @@ import {
   Signer,
   Vault,
   PendingDeposit,
+  SignBidirectionalEvent,
   SignatureRespondedEvent,
   RespondBidirectionalEvent,
   Erc20Holding,
@@ -27,6 +28,7 @@ const canton = new CantonClient();
 const SIGNER_TEMPLATE = Signer.templateId;
 const VAULT_TEMPLATE = Vault.templateId;
 const PENDING_DEPOSIT_TEMPLATE = PendingDeposit.templateId;
+const SIGN_EVENT_TEMPLATE = SignBidirectionalEvent.templateId;
 const SIG_RESPONDED_TEMPLATE = SignatureRespondedEvent.templateId;
 const RESPOND_BIDIR_TEMPLATE = RespondBidirectionalEvent.templateId;
 const ERC20_HOLDING = Erc20Holding.templateId;
@@ -378,6 +380,8 @@ describe("ledger visibility + permission model", () => {
     // Evidence contracts must be archived after claim
     const remainingPending = await canton.getActiveContracts([operator], PENDING_DEPOSIT_TEMPLATE);
     expect(hasContract(remainingPending, pendingCid)).toBe(false);
+    const remainingSignEvents = await canton.getActiveContracts([requester], SIGN_EVENT_TEMPLATE);
+    expect(hasContract(remainingSignEvents, signEventCid)).toBe(false);
     const remainingSig = await canton.getActiveContracts([sigNetwork], SIG_RESPONDED_TEMPLATE);
     expect(hasContract(remainingSig, signatureRespondedEventCid)).toBe(false);
     const remainingOutcome = await canton.getActiveContracts([sigNetwork], RESPOND_BIDIR_TEMPLATE);
