@@ -27,7 +27,7 @@ testSingleOperatorProposal = do
     createCmd VaultProposal with
       allOperators = [op1, op2]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "single-sign-vault"
 
   result <- submit op2 do
@@ -58,7 +58,7 @@ testTwoOperatorSequentialSign = do
     createCmd VaultProposal with
       allOperators = [op1, op2, op3]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "three-op-vault"
 
   -- op2 signs → Left (still waiting for op3)
@@ -98,7 +98,7 @@ testDoubleSignFails = do
     createCmd VaultProposal with
       allOperators = [op1, op2, op3]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "double-sign-vault"
 
   -- op2 signs → Left (new proposal with alreadySigned=[op2, op1])
@@ -135,7 +135,7 @@ testNonObserverCannotExercise = do
     createCmd VaultProposal with
       allOperators = [op1, op2]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "rogue-vault"
 
   submitMustFail rogue do
@@ -157,7 +157,7 @@ testEmptyOperatorsFails = do
     createCmd VaultProposal with
       allOperators = []; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "empty-ops"
 
   pure ()
@@ -176,7 +176,7 @@ testDuplicateOperatorsFails = do
     createCmd VaultProposal with
       allOperators = [op1, op1]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "dup-ops"
 
   pure ()
@@ -195,7 +195,7 @@ testDirtyVaultAddressPaddingFails = do
     createCmd VaultProposal with
       allOperators = [op1]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = dirtyVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "dirty-address-proposal"
 
   pure ()
@@ -218,7 +218,7 @@ testSigningOrderIndependence = do
     createCmd VaultProposal with
       allOperators = [op1, op2, op3]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "order-vault"
 
   -- op3 signs first (out of list order) → Left (still waiting for op2)
@@ -264,7 +264,7 @@ testProposalToDepositLifecycle = do
     createCmd VaultProposal with
       allOperators = [op1, op2]; alreadySigned = [op1]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "lifecycle-vault"
 
   -- Step 3: op2 signs → Vault created

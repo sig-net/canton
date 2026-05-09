@@ -50,7 +50,7 @@ setupWithKey pubKey = do
     createCmd Vault with
       operators = [operator]; sigNetwork
       evmVaultAddress = sampleVaultAddress
-      evmMpcPublicKey = pubKey
+      mpcResponseVerifyKey = pubKey
       vaultId = "test-vault"
 
   pure (sigNetwork, operator, requester, signerCid, vaultCid)
@@ -311,7 +311,7 @@ testVaultRejectsDirtyAddressPadding = do
     createCmd Vault with
       operators = [operator]; sigNetwork
       evmVaultAddress = dirtyVaultAddress
-      evmMpcPublicKey = testPubKeyHex
+      mpcResponseVerifyKey = testPubKeyHex
       vaultId = "dirty-address-vault"
 
 -- PendingDeposit rejects malformed request ids at the ledger boundary
