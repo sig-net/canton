@@ -62,7 +62,7 @@ curl -sf http://localhost:7575/docs/openapi > /dev/null && echo "Ready"
 
 ```bash
 cd test
-pnpm test          # single run (unit + integration)
+pnpm test          # single run of the test/ Vitest suite
 ```
 
 After Daml source changes: `cd test && pnpm generate` (clean + DAR + codegen + install; needs the sandbox up for OpenAPI codegen).
@@ -79,6 +79,14 @@ done
 ```
 
 > `dpm test` does not support `--all` — each package must be tested individually.
+
+## TypeScript Package Tests
+
+These don't need the sandbox:
+
+```bash
+pnpm -r --filter='@canton/*' --filter='canton-sig' run test
+```
 
 ## Sepolia E2E Tests
 
@@ -118,23 +126,23 @@ Send to the faucet address:
 
 ```bash
 # Start sandbox in a separate terminal first, then:
-pnpm test          # runs all tests including Sepolia e2e when env is set
+pnpm test          # runs the test/ Vitest suite, including Sepolia e2e when env is set
 ```
 
 ## Available Scripts
 
 From `test/`:
 
-| Script                   | Description                                                   |
-| ------------------------ | ------------------------------------------------------------- |
-| `pnpm test`              | Run all tests (unit + integration, Sepolia e2e if env is set) |
-| `pnpm daml:build`        | Build the DAR                                                 |
-| `pnpm daml:test`         | Run Daml Script tests                                         |
-| `pnpm daml:sandbox`      | Start Canton sandbox with JSON API on :7575                   |
-| `pnpm codegen:daml`      | Regenerate Daml JS codegen from built DAR                     |
-| `pnpm codegen:api`       | Regenerate OpenAPI types (requires running sandbox)           |
-| `pnpm generate`          | Full clean rebuild: DAR + codegen + install                   |
-| `pnpm sepolia:preflight` | Check faucet balances and print deposit addresses             |
+| Script                   | Description                                                |
+| ------------------------ | ---------------------------------------------------------- |
+| `pnpm test`              | Run the test/ Vitest suite; Sepolia e2e runs if env is set |
+| `pnpm daml:build`        | Build the DAR                                              |
+| `pnpm daml:test`         | Run Daml Script tests                                      |
+| `pnpm daml:sandbox`      | Start Canton sandbox with JSON API on :7575                |
+| `pnpm codegen:daml`      | Regenerate Daml JS codegen from built DAR                  |
+| `pnpm codegen:api`       | Regenerate OpenAPI types (requires running sandbox)        |
+| `pnpm generate`          | Full clean rebuild: DAR + codegen + install                |
+| `pnpm sepolia:preflight` | Check faucet balances and print deposit addresses          |
 
 From root:
 

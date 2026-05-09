@@ -124,7 +124,7 @@ const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 
 `canton-sig` is a thin client; the on-ledger Daml contracts enforce custody. The TS side is responsible for:
 
-- **Use disclosed contracts.** Pass `[vaultDisclosure, signerDisclosure]` on every exercise that touches `Vault` / `Signer`. Without them, the choice fails.
+- **Use the right disclosed contracts.** `RequestDeposit` and `RequestWithdrawal` exercise `Vault` and the disclosed `Signer`, so pass `[vaultDisclosure, signerDisclosure]`. `ClaimDeposit` and `CompleteWithdrawal` only exercise `Vault` plus visible evidence contracts, so pass `[vaultDisclosure]`.
 - **Never trust `SignatureRespondedEvent.signature` alone** as proof of execution. Broadcast the resulting tx; wait for the EVM receipt; _then_ wait for `RespondBidirectionalEvent` (signed over the outcome) before exercising `ClaimDeposit` / `CompleteWithdrawal`. The Daml verification is what makes the outcome safe to act on.
 - **Treat `SEPOLIA_RPC_URL` (or any destination-chain RPC) as untrusted.** Validate the receipt status, confirmations as your domain requires.
 - **Recompute `requestId` and the deposit address with the helpers and assert they match the values inside `PendingDeposit` / your `Vault` instance.** If they don't, something out-of-band changed (operator set, vaultId, path) — abort.

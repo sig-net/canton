@@ -1,8 +1,8 @@
 # daml-abi
 
-EVM ABI **decoding** for Daml. Provides slot-based access to ABI-encoded calldata and return data, covering static types (uint, int, bool, address, bytesN), dynamic types (bytes, string, arrays), and nested tuples.
+EVM ABI **decoding** for Daml. Provides slot-based access to ABI-encoded calldata and return data, covering static types (uint, int, bool, address, bytesN), dynamic types (bytes, string, arrays), nested tuples, and function selector checks.
 
-Encoding, function selector computation, and event log decoding are not supported.
+Full ABI encoding and event log decoding are not supported.
 
 ## Slot Indices vs Byte Offsets
 
@@ -23,12 +23,15 @@ let name   = abiDecodeString hex offset -- byte offset → decoded value
 ### Calldata
 
 - `abiSelector : BytesHex -> BytesHex` -- extract 4-byte function selector. Errors if data < 4 bytes.
+- `functionSelector : Text -> BytesHex` -- compute the canonical 4-byte selector for a Solidity function signature.
+- `abiSelectorMatches : Text -> BytesHex -> Bool` -- check calldata selector against a Solidity function signature.
 - `abiStripSelector : BytesHex -> BytesHex` -- strip selector, leaving ABI payload. Errors if data < 4 bytes.
 
 ### Slot Access
 
 - `abiSlot : BytesHex -> Int -> BytesHex` -- read the i-th 32-byte slot (0-indexed). Errors if out of bounds.
 - `abiSlotCount : BytesHex -> Int` -- number of complete 32-byte slots in the data.
+- `abiHasExactSlotCount : Int -> BytesHex -> Bool` -- validate exact slot count with no partial trailing data.
 
 ### Static Type Decoders
 
@@ -38,6 +41,8 @@ All take a slot index. Error on out-of-bounds.
 - `abiDecodeInt : BytesHex -> Int -> BytesHex` -- decode int (two's complement) at slot i. Returns raw 32-byte hex. Use `hexCompareInt` from `daml-uint256/HexCompare` for signed comparisons.
 - `abiDecodeBool : BytesHex -> Int -> Bool` -- decode bool at slot i (any non-zero = true).
 - `abiDecodeAddress : BytesHex -> Int -> BytesHex` -- decode address at slot i (20 bytes). Errors if the 12-byte zero padding is non-zero.
+- `isAbiAddressSlot : BytesHex -> Bool` -- validate a 32-byte ABI-encoded address slot with zero high bytes.
+- `abiAddressSlotToAddress : BytesHex -> BytesHex` -- extract the 20-byte address from a canonical ABI address slot.
 - `abiDecodeBytesN : BytesHex -> Int -> Int -> BytesHex` -- decode bytesN at slot i. Errors if n is outside 0..32.
 
 ### Dynamic Type Decoders
