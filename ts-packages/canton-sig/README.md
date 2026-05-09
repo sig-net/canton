@@ -19,7 +19,7 @@ You will receive:
 2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`.
 3. The MPC **root** secp256k1 public key (uncompressed, hex). Two children are derived from it via the Canton KDF (`ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`):
    - The **EVM child** for the deposit / sweep address (path = `${vaultId},${requester},${userPath}` for deposits, `${vaultId},root` for the sweep). Computed via `deriveDepositAddress`.
-   - The **response-verification child** for outcome verification (constant path `"canton response key"`, stored on `Vault.evmMpcPublicKey`). The Vault operator computes this when creating the Vault via `deriveResponseVerificationPublicKey` + `toSpkiPublicKey` — the integrator can recompute and assert equality before trusting the contract.
+   - The **response-verification child** for outcome verification (KDF input `sender = operatorsHash`, constant `path = "canton response key"`, stored on `Vault.evmMpcPublicKey`). The Vault operator computes this when creating the Vault via `deriveResponseVerificationPublicKey` + `toSpkiPublicKey` — the integrator can recompute and assert equality before trusting the contract.
 
 ## Quick start (deposit round-trip)
 
@@ -155,19 +155,19 @@ Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 
 ### Crypto / KDF
 
-| Export                                                                              | Purpose                                                                                                                  |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `computeRequestId(sender, txParams, caip2Id, keyVersion, path, algo, dest, params)` | Mirror of `RequestId.computeRequestId` — returns `0x`-prefixed `Hex`                                                     |
-| `computeResponseHash(requestId, mpcOutput)`                                         | `keccak256(requestId ‖ output)`                                                                                          |
-| `hashEvmType2Params(p)`                                                             | Per-tx-type field hash used inside `requestId`                                                                           |
-| `deriveCantonPublicKey(rootPubKey, predecessorId, path, keyVersion = 1)`            | Child secp256k1 public key from the Canton KDF                                                                           |
-| `deriveDepositAddress(rootPubKey, predecessorId, path, keyVersion = 1)`             | Child EVM address from MPC root pubkey                                                                                   |
-| `deriveResponseVerificationPublicKey(rootPubKey, predecessorId, keyVersion = 1)`    | Child pubkey for `RespondBidirectionalEvent.signature` verification (`path = "canton response key"`)                     |
-| `toSpkiPublicKey(uncompressedPubKey)`                                               | SPKI envelope. Wrap the **response-verification child pubkey** (not the root) before storing as `Vault.evmMpcPublicKey`. |
-| `derivePublicKey(privateKey)`                                                       | Uncompressed pubkey hex (no `0x`)                                                                                        |
-| `chainIdHexToCaip2(chainIdHex)`                                                     | Canton-format chainId hex → `"eip155:<decimal>"`                                                                         |
-| `CANTON_RESPONSE_KEY_PATH`                                                          | Constant response-verification key path (`"canton response key"`)                                                        |
-| `KEY_VERSION`                                                                       | `1`                                                                                                                      |
+| Export                                                                              | Purpose                                                                                                                               |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `computeRequestId(sender, txParams, caip2Id, keyVersion, path, algo, dest, params)` | Mirror of `RequestId.computeRequestId` — returns `0x`-prefixed `Hex`                                                                  |
+| `computeResponseHash(requestId, mpcOutput)`                                         | `keccak256(requestId ‖ output)`                                                                                                       |
+| `hashEvmType2Params(p)`                                                             | Per-tx-type field hash used inside `requestId`                                                                                        |
+| `deriveCantonPublicKey(rootPubKey, predecessorId, path, keyVersion = 1)`            | Child secp256k1 public key from the Canton KDF                                                                                        |
+| `deriveDepositAddress(rootPubKey, predecessorId, path, keyVersion = 1)`             | Child EVM address from MPC root pubkey                                                                                                |
+| `deriveResponseVerificationPublicKey(rootPubKey, predecessorId, keyVersion = 1)`    | Child pubkey for `RespondBidirectionalEvent.signature` verification (`predecessorId = operatorsHash`, `path = "canton response key"`) |
+| `toSpkiPublicKey(uncompressedPubKey)`                                               | SPKI envelope. Wrap the **response-verification child pubkey** (not the root) before storing as `Vault.evmMpcPublicKey`.              |
+| `derivePublicKey(privateKey)`                                                       | Uncompressed pubkey hex (no `0x`)                                                                                                     |
+| `chainIdHexToCaip2(chainIdHex)`                                                     | Canton-format chainId hex → `"eip155:<decimal>"`                                                                                      |
+| `CANTON_RESPONSE_KEY_PATH`                                                          | Constant response-verification key path (`"canton response key"`)                                                                     |
+| `KEY_VERSION`                                                                       | `1`                                                                                                                                   |
 
 ### EVM tx
 

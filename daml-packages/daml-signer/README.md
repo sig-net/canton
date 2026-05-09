@@ -23,7 +23,7 @@ For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For a
 
 For each `SignBidirectionalEvent` you emit, the MPC publishes two evidence contracts back on Canton:
 
-- `SignatureRespondedEvent` — ECDSA signature over the EVM tx hash. The integrator reconstructs the signed EIP-1559 tx and broadcasts it (the MPC stays out of the destination-chain mempool).
+- `SignatureRespondedEvent` — ECDSA signature over the EVM tx hash. The integrator reconstructs the signed EIP-1559 tx and broadcasts it.
 - `RespondBidirectionalEvent` — ECDSA signature over `keccak256(requestId ‖ serializedOutput)` plus the ABI-encoded return data (or a `0xdeadbeef`-prefixed payload on revert). Verified on-ledger before the consumer acts on the outcome.
 
 The Signer enforces operator-set isolation, not replay protection — calldata validation, single-use semantics, and per-deployment `path` namespacing are the consumer's job. See [Security checklist for integrators](#security-checklist-for-integrators).
@@ -62,8 +62,8 @@ You'll be given two things to integrate against:
 
 1. The `signerCid` disclosed-contract envelope (the `Signer` singleton, exposed via `disclosedContracts` on every exercise that touches it).
 2. The MPC **root** secp256k1 public key (uncompressed, hex). You derive two children from it off-ledger using the Canton KDF — `ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`:
-   - The **EVM child address** for the deployment's vault (`path` = whatever you pass on `SignRequest`; `canton-sig`'s `deriveDepositAddress` does this in one call).
-   - The **response-verification pubkey** for the constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).
+   - The **EVM child address** for the deployment's vault (`sender = operatorsHash`, `path` = whatever you pass on `SignRequest`; `canton-sig`'s `deriveDepositAddress` does this in one call).
+   - The **response-verification pubkey** for `sender = operatorsHash` and constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).
 
 ## Integrator lifecycle
 
@@ -131,10 +131,10 @@ Notes:
 
 The MPC service watches `SignBidirectionalEvent` (signatory `operators, requester`; observer `sigNetwork`) and produces **two** Canton events for each request — but they have different roles:
 
-| Event                                 | Signed by                                                                                                                    | Covers                                                   | Use                                                                                                                                                                          |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SignatureRespondedEvent.signature`   | **EVM child** key (derived from root + `(operatorsHash, path)`)                                                              | the EVM transaction hash                                 | **The consumer reads it, reconstructs the signed EIP-1559 tx, and submits it via `eth_sendRawTransaction`.** Consumers typically do **not** verify this signature on-ledger. |
-| `RespondBidirectionalEvent.signature` | **response-verification child** key (derived from root + `(operatorsHash, "canton response key")` — same KDF, constant path) | `responseHash = keccak256(requestId ‖ serializedOutput)` | The proof of execution + outcome. The consumer verifies this on-ledger and acts on `serializedOutput`.                                                                       |
+| Event                                 | Signed by                                                                                                                         | Covers                                                   | Use                                                                                                                                                                          |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SignatureRespondedEvent.signature`   | **EVM child** key (derived from root with `sender = operatorsHash` and the request `path`)                                        | the EVM transaction hash                                 | **The consumer reads it, reconstructs the signed EIP-1559 tx, and submits it via `eth_sendRawTransaction`.** Consumers typically do **not** verify this signature on-ledger. |
+| `RespondBidirectionalEvent.signature` | **response-verification child** key (derived from root with `sender = operatorsHash` and constant `path = "canton response key"`) | `responseHash = keccak256(requestId ‖ serializedOutput)` | The proof of execution + outcome. The consumer verifies this on-ledger and acts on `serializedOutput`.                                                                       |
 
 `serializedOutput` carries the ABI-encoded return data on success, or `0xdeadbeef`-prefixed payload on failure (predicate `abiHasErrorPrefix` in `daml-abi`).
 
@@ -169,7 +169,8 @@ nonconsuming choice MyDomainClaim : ...
     assertMsg "sigResp requestId mismatch"  (sigResp.requestId  == anchor.requestId)
 
     -- Verify the outcome signature against the response-verification pubkey
-    -- (derived off-ledger from the MPC root + (operatorsHash, "canton response key") and stored at deployment).
+    -- (derived off-ledger from the MPC root with sender = operatorsHash
+    --  and path = "canton response key"; stored at deployment).
     let responseHash = computeResponseHash anchor.requestId outcome.serializedOutput
     assertMsg "Invalid MPC signature"
       (secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash mpcResponseVerifyKey)
@@ -188,7 +189,7 @@ nonconsuming choice MyDomainClaim : ...
     create MyHolding with ...
 ```
 
-`mpcResponseVerifyKey` is the uncompressed secp256k1 pubkey you derive off-ledger from the MPC root + `(operatorsHash, "canton response key")` (formula and tooling pointer in [Security checklist #4](#security-checklist-for-integrators)) and store at deployment time. The `daml-vault` package stores it on the `Vault` contract under the field name `evmMpcPublicKey` — the field name is historical; the value is **not** the root key, and it is **not** the EVM child key either, it is the response-verification child derived with the constant `"canton response key"` path.
+`mpcResponseVerifyKey` is the uncompressed secp256k1 pubkey you derive off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"` (formula and tooling pointer in [Security checklist #4](#security-checklist-for-integrators)) and store at deployment time. The `daml-vault` package stores it on the `Vault` contract under the field name `evmMpcPublicKey` — the field name is historical; the value is **not** the root key, and it is **not** the EVM child key either, it is the response-verification child derived with the constant `"canton response key"` path.
 
 ### Failure modes
 
@@ -204,16 +205,16 @@ nonconsuming choice MyDomainClaim : ...
 
 The Signer signs whatever bytes it is given and tracks no per-request state. Every item below is the consumer's responsibility — getting any of them wrong can leak funds.
 
-| #   | Must do                                                                                                                                                                                                                                                            | Why                                                                                                                                 |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **Validate `txParams.calldata` before `SignBidirectional`** (ABI selector + argument checks).                                                                                                                                                                      | The Signer will sign anything.                                                                                                      |
-| 2   | **Use a single-use anchor for replay protection** (or a `requestId` nullifier set).                                                                                                                                                                                | The Signer has no nonce, no nullifier set, no approval state.                                                                       |
-| 3   | **Namespace `path` per deployment** (e.g. `${vaultId},${requester},${userPath}`).                                                                                                                                                                                  | The Signer isolates operator sets only; two consumers sharing an operator set share the key namespace unless `path` says otherwise. |
-| 4   | **Derive and store the response-verification pubkey at deployment time** on your equivalent of `Vault`: `derive_key(rootPub, derive_epsilon_canton(1, operatorsHash, "canton response key"))`. **Do not store the root pubkey directly** — verification will fail. | What `secp256k1WithEcdsaOnly` is checked against. Re-fetching at claim time opens a TOCTOU window.                                  |
-| 5   | **Cross-check `(operators, requester, requestId)`** between your anchor, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`.                                                                                                                               | A misbehaving `sigNetwork` could otherwise pair a valid signature with a different anchor.                                          |
-| 6   | **Archive the anchor first in the claim choice**, before any other assertion.                                                                                                                                                                                      | Replay protection only holds if the anchor is gone before a later assertion can revert.                                             |
-| 7   | **Verify the outcome signature on-ledger before mutating state**, against the stored response-verification pubkey.                                                                                                                                                 | Forged `RespondBidirectionalEvent` rejected at the consumer's claim choice.                                                         |
-| 8   | **Reject `serializedOutput` starting with `0xdeadbeef`** (revert payload) or that does not ABI-decode to your expected success value.                                                                                                                              | EVM revert ≠ Canton-side success.                                                                                                   |
+| #   | Must do                                                                                                                                                                                                                                                                                                                                                               | Why                                                                                                                                 |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Validate `txParams.calldata` before `SignBidirectional`** (ABI selector + argument checks).                                                                                                                                                                                                                                                                         | The Signer will sign anything.                                                                                                      |
+| 2   | **Use a single-use anchor for replay protection** (or a `requestId` nullifier set).                                                                                                                                                                                                                                                                                   | The Signer has no nonce, no nullifier set, no approval state.                                                                       |
+| 3   | **Namespace `path` per deployment** (e.g. `${vaultId},${requester},${userPath}`).                                                                                                                                                                                                                                                                                     | The Signer isolates operator sets only; two consumers sharing an operator set share the key namespace unless `path` says otherwise. |
+| 4   | **Derive and store the response-verification pubkey at deployment time** on your equivalent of `Vault`: `derive_key(rootPub, derive_epsilon_canton(1, operatorsHash, "canton response key"))`, where the second argument is `sender = operatorsHash` and the third is the constant response path. **Do not store the root pubkey directly** — verification will fail. | What `secp256k1WithEcdsaOnly` is checked against. Re-fetching at claim time opens a TOCTOU window.                                  |
+| 5   | **Cross-check `(operators, requester, requestId)`** between your anchor, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`.                                                                                                                                                                                                                                  | A misbehaving `sigNetwork` could otherwise pair a valid signature with a different anchor.                                          |
+| 6   | **Archive the anchor first in the claim choice**, before any other assertion.                                                                                                                                                                                                                                                                                         | Replay protection only holds if the anchor is gone before a later assertion can revert.                                             |
+| 7   | **Verify the outcome signature on-ledger before mutating state**, against the stored response-verification pubkey.                                                                                                                                                                                                                                                    | Forged `RespondBidirectionalEvent` rejected at the consumer's claim choice.                                                         |
+| 8   | **Reject `serializedOutput` starting with `0xdeadbeef`** (revert payload) or that does not ABI-decode to your expected success value.                                                                                                                                                                                                                                 | EVM revert ≠ Canton-side success.                                                                                                   |
 
 Replay-protection options (pick what fits your threat model):
 
@@ -284,7 +285,7 @@ Fields: same as `SignRequest` plus `sender : BytesHex` (= `operatorsHash`, set b
 
 ### `SignatureRespondedEvent`
 
-EVM-tx signature evidence. Created by `Signer.Respond`. Signed by the EVM child key (root + `(operatorsHash, path)`); used by the integrator to broadcast the signed tx. See [Integrator lifecycle § 2](#2-the-mpc-service-responds-off-canton-asynchronous) for the full key/usage table.
+EVM-tx signature evidence. Created by `Signer.Respond`. Signed by the EVM child key derived from the root with `sender = operatorsHash` and the request `path`; used by the integrator to broadcast the signed tx. See [Integrator lifecycle § 2](#2-the-mpc-service-responds-off-canton-asynchronous) for the full key/usage table.
 
 - Signatory: `sigNetwork`
 - Observer: `operators, requester`
@@ -303,7 +304,7 @@ EVM-tx signature evidence. Created by `Signer.Respond`. Signed by the EVM child 
 
 ### `RespondBidirectionalEvent`
 
-Outcome signature evidence. Signed by the response-verification child key (root + `(operatorsHash, "canton response key")`) over `responseHash = keccak256(requestId ‖ serializedOutput)`. The consumer verifies it on-ledger with `secp256k1WithEcdsaOnly` against the response-verification pubkey it stored at deployment. `serializedOutput` is ABI-encoded return data on success, or `0xdeadbeef`+payload on failure (predicate `abiHasErrorPrefix` in `daml-abi`).
+Outcome signature evidence. Signed by the response-verification child key derived from the root with `sender = operatorsHash` and `path = "canton response key"` over `responseHash = keccak256(requestId ‖ serializedOutput)`. The consumer verifies it on-ledger with `secp256k1WithEcdsaOnly` against the response-verification pubkey it stored at deployment. `serializedOutput` is ABI-encoded return data on success, or `0xdeadbeef`+payload on failure (predicate `abiHasErrorPrefix` in `daml-abi`).
 
 - Signatory: `sigNetwork`
 - Observer: `operators, requester`

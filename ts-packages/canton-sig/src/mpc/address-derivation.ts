@@ -28,6 +28,7 @@ export function deriveCantonPublicKey(
 
 /**
  * Derive the public key that verifies RespondBidirectionalEvent outcome signatures.
+ * predecessorId is the KDF sender (operatorsHash); the path is "canton response key".
  */
 export function deriveResponseVerificationPublicKey(
   rootPubKey: string,

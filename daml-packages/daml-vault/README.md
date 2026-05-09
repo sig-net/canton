@@ -4,13 +4,13 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 ## Templates
 
-| Template            | Signatory       | Observer                | Purpose                                                                                                                                                                                                        |
-| ------------------- | --------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VaultProposal`     | `alreadySigned` | `allOperators`          | Multi-party vault setup; each operator exercises `SignVault` until the set matches `allOperators`, then the choice returns the new `Vault`                                                                     |
-| `Vault`             | `operators`     | `sigNetwork`            | Per-deployment singleton; stores `evmVaultAddress`, `evmMpcPublicKey` (the **response-verification** child pubkey, derived off-ledger from the MPC root + `(operatorsHash, "canton response key")`), `vaultId` |
-| `PendingDeposit`    | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `ClaimDeposit`                                                                                                                                                                   |
-| `PendingWithdrawal` | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `CompleteWithdrawal`; carries the original holding fields for refund-on-failure                                                                                                  |
-| `Erc20Holding`      | `operators`     | `owner`                 | On-ledger ERC-20 balance. `sigNetwork` is intentionally **not** an observer — the MPC layer is decoupled from domain custody                                                                                   |
+| Template            | Signatory       | Observer                | Purpose                                                                                                                                                                                                                              |
+| ------------------- | --------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VaultProposal`     | `alreadySigned` | `allOperators`          | Multi-party vault setup; each operator exercises `SignVault` until the set matches `allOperators`, then the choice returns the new `Vault`                                                                                           |
+| `Vault`             | `operators`     | `sigNetwork`            | Per-deployment singleton; stores `evmVaultAddress`, `evmMpcPublicKey` (the **response-verification** child pubkey, derived off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"`), `vaultId` |
+| `PendingDeposit`    | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `ClaimDeposit`                                                                                                                                                                                         |
+| `PendingWithdrawal` | `operators`     | `requester, sigNetwork` | Single-use anchor archived in `CompleteWithdrawal`; carries the original holding fields for refund-on-failure                                                                                                                        |
+| `Erc20Holding`      | `operators`     | `owner`                 | On-ledger ERC-20 balance. `sigNetwork` is intentionally **not** an observer — the MPC layer is decoupled from domain custody                                                                                                         |
 
 ## Choices
 
