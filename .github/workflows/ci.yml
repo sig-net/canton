@@ -40,6 +40,10 @@ jobs:
             curl -sSL https://get.digitalasset.com/install/install.sh | sh
           fi
           echo "$HOME/.dpm/bin" >> "$GITHUB_PATH"
+          # Install the SDK toolchain explicitly so a cold/evicted ~/.dpm cache
+          # doesn't leave us with the dpm CLI but no SDK. Keep in sync with the
+          # sdk-version in daml-packages/*/daml.yaml.
+          "$HOME/.dpm/bin/dpm" install 3.4.11
 
       - name: Build DAR, run Daml tests & generate codegen
         run: |
