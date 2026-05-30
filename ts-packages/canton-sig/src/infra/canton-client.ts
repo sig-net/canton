@@ -145,7 +145,7 @@ export class CantonClient {
    *
    * Each party in `[primaryParty, ...additionalParties]` is granted both
    * `CanActAs` and `CanReadAs` rights. If the user already exists
-   * (`USER_ALREADY_EXISTS`), the call is silently ignored.
+   * (`USER_ALREADY_EXISTS`), the requested rights are granted to the existing user.
    *
    * @param userId - Unique user identifier (e.g. `"alice-user"`).
    * @param primaryParty - The user's primary party (fully-qualified).
@@ -173,7 +173,8 @@ export class CantonClient {
    * Use this when tests need strict least-privilege setups, e.g. a user that can
    * `CanActAs(requester)` and `CanReadAs(issuer)` but cannot `CanActAs(issuer)`.
    *
-   * If the user already exists (`USER_ALREADY_EXISTS`), the call is silently ignored.
+   * If the user already exists (`USER_ALREADY_EXISTS`), the requested rights are
+   * granted to that existing user.
    *
    * @param userId - Unique user identifier (e.g. `"alice-user"`).
    * @param primaryParty - The user's primary party (fully-qualified).
@@ -200,8 +201,32 @@ export class CantonClient {
     });
     if (error === undefined) return;
     const msg = JSON.stringify(error);
-    if (msg.includes("USER_ALREADY_EXISTS")) return;
+    if (msg.includes("USER_ALREADY_EXISTS")) {
+      await this.grantUserRights(userId, rights);
+      return;
+    }
     throw new Error(`createUser failed: ${msg}`);
+  }
+
+  /**
+   * Grant rights to an existing user via `POST /v2/users/{user-id}/rights`.
+   *
+   * The endpoint is idempotent for rights already present and reports only the
+   * newly granted subset.
+   */
+  async grantUserRights(userId: string, rights: UserRight[]): Promise<UserRight[]> {
+    const data = unwrap(
+      "grantUserRights",
+      await this.client.POST("/v2/users/{user-id}/rights", {
+        params: { path: { "user-id": userId } },
+        body: {
+          userId,
+          rights,
+          identityProviderId: "",
+        } as components["schemas"]["GrantUserRightsRequest"],
+      }),
+    );
+    return data.newlyGrantedRights ?? [];
   }
 
   /**
