@@ -64,7 +64,7 @@ setupWithKey pubKey = do
   pure (sigNetwork, operator, requester, signerCid, vaultCid)
 
 mkSignEvent : Party -> Party -> Party -> EvmType2TransactionParams -> Script (ContractId SignBidirectionalEvent)
-mkSignEvent operator requester sigNetwork evmTxParams =
+mkSignEvent operator requester sigNetwork evmTxParams = do
   submit (actAs operator <> actAs requester) do
     createCmd SignBidirectionalEvent with
       operators = [operator]; requester; sigNetwork
