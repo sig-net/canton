@@ -248,4 +248,4 @@ import Signer (Signer, SignBidirectionalEvent, SignatureRespondedEvent, RespondB
 import EvmTypes (EvmType2TransactionParams(..))
 ```
 
-A complete TypeScript end-to-end run-through (party allocation, vault creation, deposit, claim, withdrawal, refund-on-failure) lives in `test/src/test/helpers/e2e-setup.ts` in this repo.
+A complete TypeScript end-to-end run-through (party allocation, vault creation, deposit, claim, withdrawal, refund-on-failure) lives in `test/src/test/devnet-e2e.test.ts` in this repo.

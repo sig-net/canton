@@ -78,7 +78,7 @@ pnpm -r --filter='@canton/*' --filter='canton-sig' run test
 
 ## DevNet E2E Test
 
-`test/src/test/devnet-e2e.test.ts` exercises the full deposit + withdraw lifecycle against the **deployed** stack: the live Canton DevNet, the deployed MPC cluster, and the DevNet EVM chain behind caip2 `eip155:1` (a Sepolia-derived devnet reporting chainId 1). Nothing is spun up locally — it is a pure client.
+`test/src/test/devnet-e2e.test.ts` exercises the full deposit + withdraw lifecycle against the **deployed** stack: the live Canton DevNet, the deployed MPC cluster, and a real Sepolia EVM node. Nothing is spun up locally — it is a pure client.
 
 Because it mutates the live ledger and spends real DevNet funds, it runs only when the `MPC_CANTON_*` + funding env is present **and** `MPC_CANTON_LIVE_MUTATE=1`. Otherwise the suite skips it.
 
@@ -91,7 +91,7 @@ cp .env.example .env
 
 Fill in the `MPC_CANTON_*` values (DevNet JSON API URL, OIDC credentials, party id, the pre-deployed Signer + Vault contract/template ids, the deployed MPC root public key), plus `MPC_CANTON_ETH_RPC_URL` (the DevNet EVM node) and `FAUCET_PRIVATE_KEY` (funds the derived deposit/vault addresses). See `test/.env.example` for the full list.
 
-> The pre-deployed Vault derives `caip2 = eip155:<tx chainId>` and the deployed MPC accepts only `eip155:1`, so the test signs txs with **chainId 1** and broadcasts them to `MPC_CANTON_ETH_RPC_URL`.
+> The pre-deployed Vault hardcodes `caip2 = eip155:1` (test mode); the deployed MPC accepts only that caip2. caip2 is decoupled from the EVM chainId, so the test signs with the **real Sepolia chainId (11155111)** and broadcasts to `MPC_CANTON_ETH_RPC_URL`, which the MPC's `eip155:1` indexer watches. This split is a Sepolia-devnet workaround — on mainnet it's unnecessary, since the chain is genuinely `eip155:1`.
 
 ### Run
 
