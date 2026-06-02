@@ -4,7 +4,9 @@
  * Nothing is spun up locally: no sandbox, no in-process MPC, no local chain. We act
  * as a pure CLIENT against the live network:
  *   - the Canton DevNet JSON Ledger API (OIDC client-credentials auth → Bearer JWT);
- *   - a PRE-DEPLOYED Vault + Signer, disclosed by their configured contract ids;
+ *   - a PRE-DEPLOYED Vault + Signer — the Signer injected from its configured disclosure
+ *     envelope (.env), the way a real requester (who can't read the sigNetwork-only Signer)
+ *     is handed it; the Vault disclosed by its configured contract id;
  *   - the DEPLOYED MPC cluster — it watches the Signer events, threshold-signs, and
  *     publishes the response events. We never run any MPC; we only poll for its output
  *     and broadcast the signed EVM tx it produced.
@@ -65,7 +67,6 @@ import type {
 
 // ── Template references (package-name refs; Canton resolves to the vetted DevNet
 //    package, which may differ from the locally-generated package hash) ──────────
-const SIGNER_T = "#daml-signer:Signer:Signer";
 const SIGNATURE_RESPONDED_T = "#daml-signer:Signer:SignatureRespondedEvent";
 const RESPOND_BIDIRECTIONAL_T = "#daml-signer:Signer:RespondBidirectionalEvent";
 const VAULT_T = "#daml-vault-poc:Erc20Vault:Vault";
@@ -103,11 +104,14 @@ const EnvSchema = z.object({
   MPC_CANTON_LEDGER_API_USER: z.string().min(1),
   // On DevNet a single party is operators + requester + sigNetwork (the MPC's own party).
   MPC_CANTON_PARTY_ID: z.string().min(1),
-  // Pre-deployed Signer + Vault, disclosed by contract id; template ids validate them.
+  // Pre-deployed Signer + Vault. The Signer's full disclosure envelope is injected from
+  // config (a real requester can't read the sigNetwork-only Signer); the Vault is live.
   MPC_CANTON_SIGNER_CONTRACT_ID: z.string().min(1),
   MPC_CANTON_SIGNER_TEMPLATE_ID: z
     .string()
     .regex(/^[0-9a-fA-F]{64}:[^:]+:[^:]+$/, "expected packageId:Module:Entity"),
+  MPC_CANTON_SIGNER_CREATED_EVENT_BLOB: z.string().min(1),
+  MPC_CANTON_SIGNER_SYNCHRONIZER_ID: z.string().min(1),
   MPC_CANTON_VAULT_CONTRACT_ID: z.string().min(1),
   MPC_CANTON_VAULT_TEMPLATE_ID: z
     .string()
@@ -333,19 +337,20 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     // Preflight: OIDC auth + ledger reachability.
     await canton.getLedgerEnd();
 
-    // Validate + disclose the pre-deployed Signer and Vault.
-    signerDisclosure = await canton.getDisclosedContract(
-      [party],
-      SIGNER_T,
-      env!.MPC_CANTON_SIGNER_CONTRACT_ID,
-    );
-    expect(signerDisclosure.templateId).toBe(env!.MPC_CANTON_SIGNER_TEMPLATE_ID);
+    // The Signer disclosure is injected from config — its full envelope, exactly as a real
+    // requester (who can't read the sigNetwork-only Signer in its own ACS) is handed it.
+    signerDisclosure = {
+      templateId: env!.MPC_CANTON_SIGNER_TEMPLATE_ID,
+      contractId: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
+      createdEventBlob: env!.MPC_CANTON_SIGNER_CREATED_EVENT_BLOB,
+      synchronizerId: env!.MPC_CANTON_SIGNER_SYNCHRONIZER_ID,
+    };
+    // The Vault we disclose live (we're a stakeholder) — and read its args just below.
     vaultDisclosure = await canton.getDisclosedContract(
       [party],
       VAULT_T,
       env!.MPC_CANTON_VAULT_CONTRACT_ID,
     );
-    expect(vaultDisclosure.templateId).toBe(env!.MPC_CANTON_VAULT_TEMPLATE_ID);
 
     // Read the deployed Vault's args to drive key derivation (operators → predecessorId).
     const vaults = await canton.getActiveContracts([party], VAULT_T);
