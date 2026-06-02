@@ -320,9 +320,9 @@ Request-signature evidence. Created by `Signer.Respond`. Signed by the request c
 | `requestId`                            | `BytesHex` (32 bytes) |
 | `signature`                            | `Signature`           |
 
-| Choice                       | Type      | Controller                                                 | Args |
-| ---------------------------- | --------- | ---------------------------------------------------------- | ---- |
-| `Consume_SignatureResponded` | consuming | `actor : Party` (must be in `operators` or be `requester`) | —    |
+| Choice                       | Type      | Controller                                                 | Args            |
+| ---------------------------- | --------- | ---------------------------------------------------------- | --------------- |
+| `Consume_SignatureResponded` | consuming | `actor : Party` (must be in `operators` or be `requester`) | `actor : Party` |
 
 ### `RespondBidirectionalEvent`
 
@@ -340,9 +340,9 @@ Outcome signature evidence. Signed by the response-verification child key derive
 | `serializedOutput`                     | `BytesHex`            |
 | `signature`                            | `Signature`           |
 
-| Choice                         | Type      | Controller                                                 | Args |
-| ------------------------------ | --------- | ---------------------------------------------------------- | ---- |
-| `Consume_RespondBidirectional` | consuming | `actor : Party` (must be in `operators` or be `requester`) | —    |
+| Choice                         | Type      | Controller                                                 | Args            |
+| ------------------------------ | --------- | ---------------------------------------------------------- | --------------- |
+| `Consume_RespondBidirectional` | consuming | `actor : Party` (must be in `operators` or be `requester`) | `actor : Party` |
 
 ## Data types
 
@@ -354,10 +354,11 @@ data EvmAccessListEntry = EvmAccessListEntry with
     storageKeys : [BytesHex]        -- each 32 bytes
 
 data EvmType2TransactionParams = EvmType2TransactionParams with
-    chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit, value : BytesHex   -- each 32-byte uint256
-    to                                                                  : Optional BytesHex   -- None = contract creation; Some 20-byte address
-    calldata                                                            : BytesHex            -- raw EVM calldata, no 0x prefix; "" allowed
-    accessList                                                          : [EvmAccessListEntry]
+    chainId, nonce, maxPriorityFeePerGas, maxFeePerGas, gasLimit : BytesHex            -- each 32-byte uint256
+    to                                                           : Optional BytesHex   -- None = contract creation; Some 20-byte address
+    value                                                        : BytesHex            -- 32-byte uint256
+    calldata                                                     : BytesHex            -- raw EVM calldata, no 0x prefix; "" allowed
+    accessList                                                   : [EvmAccessListEntry]
 ```
 
 ### `TxParams.daml`
