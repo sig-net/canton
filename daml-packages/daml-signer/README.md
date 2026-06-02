@@ -58,12 +58,27 @@ import TxParams (TxParams(..))
 import RequestId (computeRequestId, computeResponseHash)
 ```
 
-You'll be given two things to integrate against:
+You'll be given two things to integrate against.
 
-1. The `signerCid` disclosed-contract envelope (the `Signer` singleton, exposed via `disclosedContracts` on every exercise that touches it).
-2. The MPC **root** secp256k1 public key (uncompressed, hex). You derive two children from it off-ledger using the Canton KDF — `ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`:
-   - The **EVM child address** for the deployment's vault (`sender = operatorsHash`, `path` = whatever you pass on `SignRequest`; `canton-sig`'s `deriveDepositAddress` does this in one call).
-   - The **response-verification pubkey** for `sender = operatorsHash` and constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).
+**1. The `Signer` disclosed-contract envelope.** The `Signer` singleton is signatory `sigNetwork` only, so a party that isn't `sigNetwork` cannot see it in its own ACS and **cannot fetch this itself** — the MPC operator hands it to you. The contract holds no secrets (its only field is the `sigNetwork` party id), so the envelope is **public**: safe to publish here or hand out freely. The live payload for the **current DevNet deployment** — attach it under `disclosedContracts` on every exercise that touches the `Signer`:
+
+```json
+{
+  "templateId": "e89a2b8fa915d1a5b682a6ba01eba1f8d0bdca685dc3b0d3039815d70a06abb0:Signer:Signer",
+  "contractId": "0002494636bb5d7f7a3e8abf9ad8c6c63c63598e8f95c700df0892593c8d350af5ca12122030b000af34b526db222393b97913597d5ef0a77c5efb27571522ddaa67245427",
+  "createdEventBlob": "CgMyLjESjQMKRQACSUY2u11/ej6Kv5rYxsY8Y1mOj5XHAN8Iklk8jTUK9coSEiAwsACvNLUm2yIjk7l5E1l9XvCnfF77J1cVIt2qZyRUJxILZGFtbC1zaWduZXIaUgpAZTg5YTJiOGZhOTE1ZDFhNWI2ODJhNmJhMDFlYmExZjhkMGJkY2E2ODVkYzNiMGQzMDM5ODE1ZDcwYTA2YWJiMBIGU2lnbmVyGgZTaWduZXIiWmpYClYKVDpSc2lnbmV0LWRldi0xOjoxMjIwNDc5Y2U1ZGI3YWNhYjg3YmVhNDUxZGNmY2ZiNTA5YzgzMDJjN2Y3MTI4MTM2MTk4NDAzYzA4MTIyYWUwMDQ0OCpSc2lnbmV0LWRldi0xOjoxMjIwNDc5Y2U1ZGI3YWNhYjg3YmVhNDUxZGNmY2ZiNTA5YzgzMDJjN2Y3MTI4MTM2MTk4NDAzYzA4MTIyYWUwMDQ0ODkNZpuxkFIGAEIqCiYKJAgBEiBSUcACnyWJSqXL+CayG0zRcsKd1yfQtuo0x9Oa2NArzRAe",
+  "synchronizerId": "global-domain::1220be58c29e65de40bf273be1dc2b266d43a9a002ea5b18955aeef7aac881bb471a"
+}
+```
+
+Refresh it if the `Signer` is re-created or a submission is rejected for a stale disclosure — re-fetch with `canton-sig`'s `getDisclosedContract`, or `GET /v2/state/active-contracts` filtered to `#daml-signer:Signer:Signer` with `includeCreatedEventBlob=true`.
+
+**Alternative — skip the `Signer`.** `SignBidirectional` only does `exercise signRequestCid Execute`, and you are already a signatory of your own `SignRequest`. So you can `exercise SignRequest.Execute` directly (controller `requester`) to produce the identical `SignBidirectionalEvent` — no disclosure, no `Signer` cid needed. The MPC watches `SignBidirectionalEvent` however it was created. (Every tested path in this repo goes through `SignBidirectional`; before relying on `Execute`-direct, confirm the MPC's `indexer_canton` triggers on the `SignBidirectionalEvent` **create**, not specifically on a `Signer` exercise.)
+
+**2. The MPC root secp256k1 public key** (uncompressed, hex). You derive two children from it off-ledger with the Canton KDF — `ε = keccak256(prefix : chainId : predecessorId : path)`, child = `rootPub + ε·G`. The exact prefix (`"sig.network v2.0.0 epsilon derivation"`) and the `canton:global` chain id are the source of truth in signet.js — see [`deriveChildPublicKey`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/utils/cryptography.ts#L90-L122) and [`KDF_CHAIN_IDS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L35-L39). For Canton, `predecessorId = sender = operatorsHash`:
+
+- The **EVM child address** (`path` = whatever you pass on `SignRequest`; `canton-sig`'s `deriveDepositAddress` does this in one call).
+- The **response-verification pubkey** for constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).
 
 ## Integrator lifecycle
 
@@ -228,7 +243,6 @@ The Signer signs whatever bytes it is given and tracks no per-request state. Eve
 
 Replay-protection options (pick what fits your threat model):
 
-- Single-use anchor template, one contract per request, archived on completion. Store `signEventCid` on the anchor and archive it in the same completion transaction (the `daml-vault` pattern with `PendingDeposit` / `PendingWithdrawal`).
 - A registry contract that records every used `requestId` (nullifier set).
 - Off-chain operator enforcement via a request-approve flow before the consumer ever creates the `SignRequest`.
 - Nothing — relying on the destination chain's nonce when a duplicate sign is harmless (signing is RFC6979-deterministic, so duplicates produce identical signatures and only one tx can land).
