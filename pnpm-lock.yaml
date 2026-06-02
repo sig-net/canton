@@ -121,9 +121,9 @@ importers:
       '@daml.js/daml-signer-0.0.1':
         specifier: file:./generated/model/daml-signer-0.0.1
         version: file:ts-packages/canton-sig/generated/model/daml-signer-0.0.1
-      '@daml.js/daml-vault-0.0.1':
-        specifier: file:./generated/model/daml-vault-0.0.1
-        version: file:ts-packages/canton-sig/generated/model/daml-vault-0.0.1
+      '@daml.js/daml-vault-poc-0.0.1':
+        specifier: file:./generated/model/daml-vault-poc-0.0.1
+        version: file:ts-packages/canton-sig/generated/model/daml-vault-poc-0.0.1
       '@types/node':
         specifier: ^25.3.0
         version: 25.5.0
@@ -234,8 +234,8 @@ packages:
   '@daml.js/daml-signer-0.0.1@file:ts-packages/canton-sig/generated/model/daml-signer-0.0.1':
     resolution: {directory: ts-packages/canton-sig/generated/model/daml-signer-0.0.1, type: directory}
 
-  '@daml.js/daml-vault-0.0.1@file:ts-packages/canton-sig/generated/model/daml-vault-0.0.1':
-    resolution: {directory: ts-packages/canton-sig/generated/model/daml-vault-0.0.1, type: directory}
+  '@daml.js/daml-vault-poc-0.0.1@file:ts-packages/canton-sig/generated/model/daml-vault-poc-0.0.1':
+    resolution: {directory: ts-packages/canton-sig/generated/model/daml-vault-poc-0.0.1, type: directory}
 
   '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0@file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0':
     resolution: {directory: ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0, type: directory}
@@ -2342,7 +2342,7 @@ snapshots:
       '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0
       '@mojotech/json-type-validation': 3.1.0
 
-  '@daml.js/daml-vault-0.0.1@file:ts-packages/canton-sig/generated/model/daml-vault-0.0.1':
+  '@daml.js/daml-vault-poc-0.0.1@file:ts-packages/canton-sig/generated/model/daml-vault-poc-0.0.1':
     dependencies:
       '@daml.js/daml-prim-DA-Types-1.0.0': file:ts-packages/canton-sig/generated/model/daml-prim-DA-Types-1.0.0
       '@daml.js/daml-signer-0.0.1': file:ts-packages/canton-sig/generated/model/daml-signer-0.0.1
