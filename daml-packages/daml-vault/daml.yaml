@@ -1,5 +1,5 @@
 sdk-version: 3.4.11
-name: daml-vault
+name: daml-vault-poc
 version: 0.0.1
 source: daml
 dependencies:
