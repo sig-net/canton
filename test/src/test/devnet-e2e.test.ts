@@ -9,11 +9,12 @@
  *     publishes the response events. We never run any MPC; we only poll for its output
  *     and broadcast the signed EVM tx it produced.
  *
- * Why chainId 1: the Vault derives `caip2 = "eip155:" <> chainId` (Erc20Vault.daml),
- * and the deployed MPC accepts ONLY `eip155:1` (mpc primitives `from_caip2_chain_id`).
- * So every tx the MPC signs carries chainId 1, and we broadcast it to the DevNet EVM
- * node behind `eip155:1` (a Sepolia-derived devnet that reports chainId 1) at
- * MPC_CANTON_ETH_RPC_URL.
+ * caip2 vs chainId: the Vault hardcodes `caip2 = "eip155:1"` (test mode, Erc20Vault.daml)
+ * because the deployed MPC accepts ONLY that caip2 (mpc primitives `from_caip2_chain_id`).
+ * caip2 is NOT part of the signing-key derivation, so it can differ from the tx's EIP-155
+ * chainId. We therefore sign each tx with the REAL Sepolia chainId (11155111) — valid
+ * on-chain — while computing the requestId with caip2 `eip155:1` to match the Vault, then
+ * broadcast to Sepolia (MPC_CANTON_ETH_RPC_URL), which the MPC's `eip155:1` indexer watches.
  *
  * THIS MUTATES THE LIVE LEDGER AND SPENDS REAL DEVNET FUNDS. It only runs when the
  * MPC_CANTON_* + funding env is present AND MPC_CANTON_LIVE_MUTATE=1; otherwise it
@@ -35,7 +36,7 @@ import {
   serializeSignature,
   type Hex,
 } from "viem";
-import { mainnet } from "viem/chains"; // chainId 1 — matches the DevNet `eip155:1` node
+import { sepolia } from "viem/chains"; // chainId 11155111 — txs are signed for real Sepolia
 import { privateKeyToAccount, privateKeyToAddress } from "viem/accounts";
 import { DER } from "@noble/curves/abstract/weierstrass.js";
 import { utils as signetUtils } from "signet.js";
@@ -43,7 +44,6 @@ import {
   CantonClient,
   findCreated,
   computeRequestId,
-  chainIdHexToCaip2,
   deriveDepositAddress,
   serializeUnsignedTx,
   reconstructSignedTx,
@@ -71,7 +71,10 @@ const RESPOND_BIDIRECTIONAL_T = "#daml-signer:Signer:RespondBidirectionalEvent";
 const VAULT_T = "#daml-vault-poc:Erc20Vault:Vault";
 
 // ── Constants ───────────────────────────────────────────────────────────────────
-const DEVNET_CHAIN_ID = 1n; // the DevNet `eip155:1` node reports chainId 1
+const SEPOLIA_CHAIN_ID = 11155111n; // signed into every tx; valid on real Sepolia
+// The Vault hardcodes caip2 `eip155:1` (test mode); the client recomputes the requestId
+// with the SAME value, decoupled from the signed chainId above.
+const VAULT_CAIP2 = "eip155:1";
 const GAS_LIMIT = 100_000n;
 const DEPOSIT_AMOUNT = 1_000_000_000_000_000n; // 0.001 token (18 decimals)
 const FAUCET_ETH_AMOUNT = 2_000_000_000_000_000n; // ~2× a transfer's gas
@@ -116,7 +119,7 @@ const EnvSchema = z.object({
       /^(secp256k1:[1-9A-HJ-NP-Za-km-z]+|04[0-9a-fA-F]{128})$/,
       "NAJ (secp256k1:base58) or uncompressed SEC1 (04 + 128 hex)",
     ),
-  // The DevNet EVM node behind caip2 `eip155:1` (chainId 1). We fund + broadcast here.
+  // Real Sepolia RPC — we fund derived addresses and broadcast the MPC-signed txs here.
   MPC_CANTON_ETH_RPC_URL: z.url(),
   FAUCET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "0x + 64 hex"),
   ERC20_ADDRESS: z
@@ -199,7 +202,7 @@ let signerDisclosure: DisclosedContract;
 let vaultDisclosure: DisclosedContract;
 
 const ethPublicClient = () =>
-  createPublicClient({ chain: mainnet, transport: http(env!.MPC_CANTON_ETH_RPC_URL) });
+  createPublicClient({ chain: sepolia, transport: http(env!.MPC_CANTON_ETH_RPC_URL) });
 
 /** Poll the ACS until a contract of `templateId` visible to `party` matches `predicate`. */
 async function pollForContract(
@@ -241,7 +244,7 @@ async function fundFromFaucet(target: Hex, erc20Amount: bigint): Promise<void> {
   const publicClient = ethPublicClient();
   const walletClient = createWalletClient({
     account,
-    chain: mainnet,
+    chain: sepolia,
     transport: http(env!.MPC_CANTON_ETH_RPC_URL),
   });
   if ((await publicClient.getBalance({ address: target })) < FAUCET_ETH_AMOUNT) {
@@ -259,7 +262,7 @@ async function fundFromFaucet(target: Hex, erc20Amount: bigint): Promise<void> {
   }
 }
 
-/** Build the canonical ERC-20 `transfer(to, amount)` EIP-1559 params (chainId 1). */
+/** Build the canonical ERC-20 `transfer(to, amount)` EIP-1559 params (Sepolia chainId). */
 async function buildTransferParams(
   fromAddress: Hex,
   to: Hex,
@@ -272,7 +275,7 @@ async function buildTransferParams(
     amount,
   ]).slice(2);
   return {
-    chainId: toCantonHex(DEVNET_CHAIN_ID, 32),
+    chainId: toCantonHex(SEPOLIA_CHAIN_ID, 32),
     nonce: toCantonHex(BigInt(nonce), 32),
     maxPriorityFeePerGas: toCantonHex(maxPriorityFeePerGas, 32),
     maxFeePerGas: toCantonHex(maxFeePerGas, 32),
@@ -388,7 +391,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
         signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
         path: subPath,
         evmTxParams,
-        keyVersion: KEY_VERSION,
+        keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
         algo: ALGO,
         dest: DEST,
         params: "",
@@ -401,9 +404,9 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     const pending = findCreated(depositResult.transaction.events, "PendingDeposit");
     const { requestId } = pending.createArgument as PendingDeposit;
 
-    // Cross-language requestId invariant (caip2 from chainId 1 ⇒ eip155:1).
-    const caip2Id = chainIdHexToCaip2(evmTxParams.chainId);
-    expect(caip2Id).toBe("eip155:1");
+    // caip2 is hardcoded `eip155:1` in the Vault (test mode) and is decoupled from the
+    // signed Sepolia chainId; the requestId must use it to match the ledger (invariant below).
+    const caip2Id = VAULT_CAIP2;
     const tsRequestId = computeRequestId(
       predecessorId,
       { tag: "EvmType2TxParams", value: evmTxParams },
@@ -486,7 +489,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
         evmTxParams,
         recipientAddress: recipientPadded,
         balanceCid: holdingCid,
-        keyVersion: KEY_VERSION,
+        keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
         algo: ALGO,
         dest: DEST,
         params: "",
@@ -499,8 +502,8 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     const pendingWdl = findCreated(wdlResult.transaction.events, "PendingWithdrawal");
     const { requestId } = pendingWdl.createArgument as PendingWithdrawal;
 
-    // Withdrawal derivation path is the vault root: `${vaultId},root`.
-    const caip2Id = chainIdHexToCaip2(evmTxParams.chainId);
+    // Withdrawal derivation path is the vault root: `${vaultId},root`. caip2 = eip155:1 (see deposit).
+    const caip2Id = VAULT_CAIP2;
     const tsRequestId = computeRequestId(
       predecessorId,
       { tag: "EvmType2TxParams", value: evmTxParams },

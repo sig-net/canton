@@ -29,7 +29,7 @@ pnpm -r --filter='@canton/*' --filter='canton-sig' run test
 cd test && MPC_CANTON_LIVE_MUTATE=1 pnpm test
 ```
 
-The pre-deployed Vault derives `caip2 = eip155:<tx chainId>` and the deployed MPC accepts only `eip155:1`, so the test signs txs with **chainId 1** and broadcasts to `MPC_CANTON_ETH_RPC_URL`.
+The pre-deployed Vault hardcodes `caip2 = eip155:1` (test mode) and the deployed MPC accepts only that caip2. Since caip2 is decoupled from the EVM chainId, the test signs txs with the **real Sepolia chainId (11155111)** — valid on-chain — and broadcasts to `MPC_CANTON_ETH_RPC_URL` (a Sepolia RPC), which the MPC's `eip155:1` indexer watches.
 
 For a local loop (a real MPC against a local sandbox), see `TEST_LOCALLY.md` (Rust `mpc` repo).
 
