@@ -35,14 +35,12 @@
     "@mojotech/json-type-validation": "^3.1.0",
     "@noble/curves": "^2.0.1",
     "openapi-fetch": "^0.17.0",
-    "signet.js": "0.4.1",
-    "ws": "^8.19.0"
+    "signet.js": "0.4.1"
   },
   "devDependencies": {
     "@daml.js/daml-signer-0.0.1": "file:./generated/model/daml-signer-0.0.1",
     "@daml.js/daml-vault-0.0.1": "file:./generated/model/daml-vault-0.0.1",
     "@types/node": "^25.3.0",
-    "@types/ws": "^8.18.1",
     "viem": "^2.46.3",
     "tsdown": "^0.21.4",
     "typescript": "^5.9.3",

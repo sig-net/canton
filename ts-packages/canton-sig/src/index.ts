@@ -1,24 +1,17 @@
 import { fileURLToPath } from "node:url";
 
-// MPC Service
-export { MpcServer } from "./mpc-service/server.js";
-export type { MpcServerConfig } from "./mpc-service/server.js";
-export { deriveChildPrivateKey, signEvmTxHash, signMpcResponse } from "./mpc-service/signer.js";
-
 // Canton infrastructure
 export { CantonClient } from "./infra/canton-client.js";
 export type {
+  CantonClientOptions,
   CreatedEvent,
   Event,
   UserRight,
   DisclosedContract,
   TransactionResponse,
-  JsGetUpdatesResponse,
 } from "./infra/canton-client.js";
 export { canActAsRight, canReadAsRight } from "./infra/canton-client.js";
 export { getCreatedEvent, findCreated, firstCreated } from "./infra/canton-helpers.js";
-export { createLedgerStream } from "./infra/ledger-stream.js";
-export type { StreamHandle } from "./infra/ledger-stream.js";
 
 // MPC crypto & address derivation
 export {
@@ -27,8 +20,8 @@ export {
   hashEvmType2Params,
   toSpkiPublicKey,
   derivePublicKey,
-} from "./mpc/crypto.js";
-export type { TxParams } from "./mpc/crypto.js";
+} from "./crypto.js";
+export type { TxParams } from "./crypto.js";
 export {
   deriveCantonPublicKey,
   deriveDepositAddress,
@@ -36,7 +29,7 @@ export {
   chainIdHexToCaip2,
   CANTON_RESPONSE_KEY_PATH,
   KEY_VERSION,
-} from "./mpc/address-derivation.js";
+} from "./address-derivation.js";
 
 // EVM transaction building
 export {

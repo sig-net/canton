@@ -1,7 +1,7 @@
 import { keccak256, toHex, toBytes, pad, concat, type Hex } from "viem";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
-import { cantonHexToHex } from "../evm/hex.js";
-import type { CantonEvmAccessListEntry, CantonEvmType2Params } from "../evm/tx-builder.js";
+import { cantonHexToHex } from "./evm/hex.js";
+import type { CantonEvmAccessListEntry, CantonEvmType2Params } from "./evm/tx-builder.js";
 
 export type TxParams = { tag: "EvmType2TxParams"; value: CantonEvmType2Params };
 
