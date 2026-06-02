@@ -1,24 +1,23 @@
 /**
- * Real Canton DevNet e2e — ERC-20 Vault deposit + withdraw against the DEPLOYED MPC.
+ * Canton DevNet e2e — ERC-20 Vault deposit + withdraw against the MPC.
  *
- * Nothing is spun up locally: no sandbox, no in-process MPC, no local chain. We act
- * as a pure CLIENT against the live network:
+ * We run as a pure client against the live network:
  *   - the Canton DevNet JSON Ledger API (OIDC client-credentials auth → Bearer JWT);
- *   - a PRE-DEPLOYED Vault + Signer — the Signer injected from its configured disclosure
- *     envelope (.env), the way a real requester (who can't read the sigNetwork-only Signer)
+ *   - the Vault + Signer — the Signer injected from its configured disclosure
+ *     envelope (.env), the way a requester (who can't read the sigNetwork-only Signer)
  *     is handed it; the Vault disclosed by its configured contract id;
- *   - the DEPLOYED MPC cluster — it watches the Signer events, threshold-signs, and
+ *   - the MPC cluster — it watches the Signer events, threshold-signs, and
  *     publishes the response events. We never run any MPC; we only poll for its output
  *     and broadcast the signed EVM tx it produced.
  *
  * caip2 vs chainId: the Vault hardcodes `caip2 = "eip155:1"` (test mode, Erc20Vault.daml)
- * because the deployed MPC accepts ONLY that caip2 (mpc primitives `from_caip2_chain_id`).
+ * because the MPC accepts ONLY that caip2 (mpc primitives `from_caip2_chain_id`).
  * caip2 is NOT part of the signing-key derivation, so it can differ from the tx's EIP-155
- * chainId. We therefore sign each tx with the REAL Sepolia chainId (11155111) — valid
+ * chainId. We therefore sign each tx with the Sepolia chainId (11155111) — valid
  * on-chain — while computing the requestId with caip2 `eip155:1` to match the Vault, then
  * broadcast to Sepolia (MPC_CANTON_ETH_RPC_URL), which the MPC's `eip155:1` indexer watches.
  *
- * THIS MUTATES THE LIVE LEDGER AND SPENDS REAL DEVNET FUNDS. It only runs when the
+ * THIS MUTATES THE LIVE LEDGER AND SPENDS DEVNET FUNDS. It only runs when the
  * MPC_CANTON_* + funding env is present AND MPC_CANTON_LIVE_MUTATE=1; otherwise it
  * is skipped. For a local loop instead, see ../../../TEST_LOCALLY.md (Rust mpc repo).
  */
@@ -38,7 +37,7 @@ import {
   serializeSignature,
   type Hex,
 } from "viem";
-import { sepolia } from "viem/chains"; // chainId 11155111 — txs are signed for real Sepolia
+import { sepolia } from "viem/chains"; // chainId 11155111 — txs are signed for Sepolia
 import { privateKeyToAccount, privateKeyToAddress } from "viem/accounts";
 import { DER } from "@noble/curves/abstract/weierstrass.js";
 import { utils as signetUtils } from "signet.js";
@@ -72,7 +71,7 @@ const RESPOND_BIDIRECTIONAL_T = "#daml-signer:Signer:RespondBidirectionalEvent";
 const VAULT_T = "#daml-vault-poc:Erc20Vault:Vault";
 
 // ── Constants ───────────────────────────────────────────────────────────────────
-const SEPOLIA_CHAIN_ID = 11155111n; // signed into every tx; valid on real Sepolia
+const SEPOLIA_CHAIN_ID = 11155111n; // signed into every tx; valid on Sepolia
 // The Vault hardcodes caip2 `eip155:1` (test mode); the client recomputes the requestId
 // with the SAME value, decoupled from the signed chainId above.
 const VAULT_CAIP2 = "eip155:1";
@@ -86,7 +85,7 @@ const ALGO = "ECDSA";
 const DEST = "ethereum";
 
 const POLL_INTERVAL_MS = 5_000;
-const SIGN_TIMEOUT_MS = 180_000; // wait for the deployed MPC to threshold-sign
+const SIGN_TIMEOUT_MS = 180_000; // wait for the MPC to threshold-sign
 // The outcome leg can take minutes: the node waits for on-chain confirmation depth.
 const RESPOND_TIMEOUT_MS = Number(process.env.MPC_CANTON_RESPOND_TIMEOUT_MS ?? 300_000);
 // Prime the MPC's outcome-watcher before the tx lands (guards a broadcast-before-watch race).
@@ -104,8 +103,8 @@ const EnvSchema = z.object({
   MPC_CANTON_LEDGER_API_USER: z.string().min(1),
   // On DevNet a single party is operators + requester + sigNetwork (the MPC's own party).
   MPC_CANTON_PARTY_ID: z.string().min(1),
-  // Pre-deployed Signer + Vault. The Signer's full disclosure envelope is injected from
-  // config (a real requester can't read the sigNetwork-only Signer); the Vault is live.
+  // Signer + Vault. The Signer's full disclosure envelope is injected from
+  // config (a requester can't read the sigNetwork-only Signer); the Vault is live.
   MPC_CANTON_SIGNER_CONTRACT_ID: z.string().min(1),
   MPC_CANTON_SIGNER_TEMPLATE_ID: z
     .string()
@@ -116,14 +115,14 @@ const EnvSchema = z.object({
   MPC_CANTON_VAULT_TEMPLATE_ID: z
     .string()
     .regex(/^[0-9a-fA-F]{64}:[^:]+:[^:]+$/, "expected packageId:Module:Entity"),
-  // Deployed MPC cluster root pubkey — NAJ (`secp256k1:base58…`) or uncompressed SEC1.
+  // MPC cluster root pubkey — NAJ (`secp256k1:base58…`) or uncompressed SEC1.
   MPC_CANTON_ROOT_PUBLIC_KEY: z
     .string()
     .regex(
       /^(secp256k1:[1-9A-HJ-NP-Za-km-z]+|04[0-9a-fA-F]{128})$/,
       "NAJ (secp256k1:base58) or uncompressed SEC1 (04 + 128 hex)",
     ),
-  // Real Sepolia RPC — we fund derived addresses and broadcast the MPC-signed txs here.
+  // Sepolia RPC — we fund derived addresses and broadcast the MPC-signed txs here.
   MPC_CANTON_ETH_RPC_URL: z.url(),
   FAUCET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "0x + 64 hex"),
   ERC20_ADDRESS: z
@@ -136,7 +135,7 @@ type Env = z.infer<typeof EnvSchema>;
 const parsed = EnvSchema.safeParse(process.env);
 const env: Env | null = parsed.success ? parsed.data : null;
 const mutate = process.env.MPC_CANTON_LIVE_MUTATE === "1";
-// Gated: needs full config AND the explicit live-mutate opt-in (spends real funds).
+// Gated: needs full config AND the explicit live-mutate opt-in (spends funds).
 const describeIf = env && mutate ? describe : describe.skip;
 
 // ── Local helpers ─────────────────────────────────────────────────────────────--
@@ -292,7 +291,7 @@ async function buildTransferParams(
 }
 
 /**
- * Wait for the deployed MPC's request signature, assert it was made with the key for
+ * Wait for the MPC's request signature, assert it was made with the key for
  * `expectedSigner`, then broadcast the reconstructed tx to the DevNet chain.
  * Returns the SignatureRespondedEvent cid.
  */
@@ -326,7 +325,7 @@ async function signAndBroadcast(
 }
 
 // ── Specs ─────────────────────────────────────────────────────────────────────--
-describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", () => {
+describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
   let holdingCid: string | undefined;
 
   beforeAll(async () => {
@@ -337,7 +336,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     // Preflight: OIDC auth + ledger reachability.
     await canton.getLedgerEnd();
 
-    // The Signer disclosure is injected from config — its full envelope, exactly as a real
+    // The Signer disclosure is injected from config — its full envelope, exactly as a
     // requester (who can't read the sigNetwork-only Signer in its own ACS) is handed it.
     signerDisclosure = {
       templateId: env!.MPC_CANTON_SIGNER_TEMPLATE_ID,
@@ -352,7 +351,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
       env!.MPC_CANTON_VAULT_CONTRACT_ID,
     );
 
-    // Read the deployed Vault's args to drive key derivation (operators → predecessorId).
+    // Read the Vault's args to drive key derivation (operators → predecessorId).
     const vaults = await canton.getActiveContracts([party], VAULT_T);
     const vaultContract = vaults.find((c) => c.contractId === env!.MPC_CANTON_VAULT_CONTRACT_ID);
     if (!vaultContract) throw new Error("Configured Vault not visible to party");
@@ -374,7 +373,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     );
   }, 120_000);
 
-  it("deposits ERC-20 into the vault via the deployed MPC", async () => {
+  it("deposits ERC-20 into the vault via the MPC", async () => {
     const subPath = `devnet-e2e,${Date.now()}`; // unique → fresh deposit address (nonce 0)
     const fullPath = `${vaultId},${party},${subPath}`; // matches Vault: vaultId,<requester>,<path>
     const depositAddress = deriveDepositAddress(rootPubKey, predecessorId, fullPath);
@@ -424,7 +423,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     );
     expect(tsRequestId.slice(2)).toBe(requestId);
 
-    // Deployed MPC signs; we verify the signer and broadcast the deposit tx.
+    // The MPC signs; we verify the signer and broadcast the deposit tx.
     const signatureRespondedEventCid = await signAndBroadcast(
       evmTxParams,
       requestId,
@@ -432,7 +431,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
       "deposit",
     );
 
-    // Deployed MPC observes the on-chain outcome → RespondBidirectionalEvent.
+    // The MPC observes the on-chain outcome → RespondBidirectionalEvent.
     const respondEvent = await pollForContract(
       RESPOND_BIDIRECTIONAL_T,
       (a) => a.requestId === requestId,
@@ -468,7 +467,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     holdingCid = holding.contractId;
   }, 900_000);
 
-  it("withdraws the vault holding back out via the deployed MPC", async () => {
+  it("withdraws the vault holding back out via the MPC", async () => {
     if (!holdingCid)
       throw new Error("withdrawal requires the deposit test to have produced a holding");
 
@@ -521,7 +520,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle (deployed MPC, real chain)", ()
     );
     expect(tsRequestId.slice(2)).toBe(requestId);
 
-    // Deployed MPC signs (with the vault's child key); broadcast from the vault address.
+    // The MPC signs (with the vault's child key); broadcast from the vault address.
     const signatureRespondedEventCid = await signAndBroadcast(
       evmTxParams,
       requestId,

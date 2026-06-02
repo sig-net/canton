@@ -1,8 +1,8 @@
 # Testing Locally
 
-This repo's TypeScript test (`test/src/test/devnet-e2e.test.ts`) runs against the **real Canton DevNet + the deployed MPC** — it does not spin anything up locally.
+This repo's TypeScript test (`test/src/test/devnet-e2e.test.ts`) runs against the **Canton DevNet + the MPC** — it does not spin anything up locally.
 
-If you want a fully local loop instead — a **real MPC node running against a local Canton sandbox** — that harness already exists in the Rust MPC repo (`git@github.com:sig-net/mpc`). It is the right place for local iteration because it wires up everything for you; this repo deliberately keeps no local sandbox or in-process MPC.
+If you want a fully local loop instead — an **MPC node running against a local Canton sandbox** — that harness already exists in the Rust MPC repo (`git@github.com:sig-net/mpc`). It is the right place for local iteration because it wires up everything for you.
 
 ## What the Rust harness gives you
 
@@ -10,7 +10,7 @@ In a single `cargo test` run it starts:
 
 - a local **Canton sandbox** — it literally shells out to `dpm sandbox --json-api-port 7575 -c <generated-auth.conf>` (`integration-tests/src/canton.rs`), with JWT/JWKS auth via a local OIDC test provider;
 - the **`daml-vault` DAR** loaded into it, and a freshly created `Signer` contract + parties (`SigNetwork` / `Operator` / `Requester`);
-- a real **`mpc-node` cluster** (the actual binary, not a mock) wired to that sandbox;
+- an **`mpc-node` cluster** wired to that sandbox;
 - a local **Anvil** EVM container that the signed EIP-1559 txs are relayed to.
 
 It then submits a `SignRequest`, waits for the cluster to threshold-sign (`SignatureRespondedEvent`), relays the signed tx to Anvil, and verifies the bidirectional outcome (`RespondBidirectionalEvent`).
@@ -22,7 +22,7 @@ It then submits a `SignRequest`, waits for the cluster to threshold-sign (`Signa
 - `integration-tests/src/canton.rs` — the `CantonSandbox` fixture (`dpm sandbox` + party/user/Signer bootstrap).
 - `.github/workflows/canton.yml` — the de-facto runbook (exact build steps + commands).
 
-> These differ from `canton_live.rs`, which targets the _deployed_ DevNet (the equivalent of this repo's `devnet-e2e.test.ts`).
+> These differ from `canton_live.rs`, which targets the DevNet (the equivalent of this repo's `devnet-e2e.test.ts`).
 
 ## Prerequisites
 
@@ -43,7 +43,7 @@ From the `mpc` repo root, build the pieces the cluster spawns, then run the igno
 cargo build -p mpc-node --release                      # the node the cluster launches
 cargo build -p integration-tests --tests
 
-# full E2E: local sandbox + real MPC cluster + Anvil
+# full E2E: local sandbox + MPC cluster + Anvil
 cargo test -p integration-tests --test lib -- cases::canton --ignored --nocapture --test-threads 1
 
 # just the indexer/stream tests
