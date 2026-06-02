@@ -2,7 +2,7 @@
 
 Generic MPC signing infrastructure for Canton. The Signer is a small set of Daml templates that lets a calling contract ask a trusted MPC service (the `sigNetwork` party) to produce signatures for transactions on a downstream chain (currently EVM; extensible to BTC, Solana, etc.). It is chain-agnostic and reusable across multiple consumer implementations.
 
-For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/helpers/e2e-setup.ts` in this repo.
+For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/devnet-e2e.test.ts` in this repo.
 
 ## How this fits together
 
@@ -60,7 +60,7 @@ import RequestId (computeRequestId, computeResponseHash)
 
 You'll be given two things to integrate against.
 
-**1. The `Signer` disclosed-contract envelope.** The `Signer` singleton is signatory `sigNetwork` only, so a party that isn't `sigNetwork` cannot see it in its own ACS and **cannot fetch this itself** — the MPC operator hands it to you. The contract holds no secrets (its only field is the `sigNetwork` party id), so the envelope is **public**: safe to publish here or hand out freely. The live payload for the **current DevNet deployment** — attach it under `disclosedContracts` on every exercise that touches the `Signer`:
+**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `SignBidirectional`). It carries no secrets — treat it as config. Current DevNet payload:
 
 ```json
 {
@@ -71,11 +71,9 @@ You'll be given two things to integrate against.
 }
 ```
 
-Refresh it if the `Signer` is re-created or a submission is rejected for a stale disclosure — re-fetch with `canton-sig`'s `getDisclosedContract`, or `GET /v2/state/active-contracts` filtered to `#daml-signer:Signer:Signer` with `includeCreatedEventBlob=true`.
+`templateId` + `contractId` identify the on-ledger `Signer`; `createdEventBlob` is the authenticated create-event payload the ledger validates the disclosure against; `synchronizerId` is the Canton synchronizer (domain) it lives on.
 
-**Alternative — skip the `Signer`.** `SignBidirectional` only does `exercise signRequestCid Execute`, and you are already a signatory of your own `SignRequest`. So you can `exercise SignRequest.Execute` directly (controller `requester`) to produce the identical `SignBidirectionalEvent` — no disclosure, no `Signer` cid needed. The MPC watches `SignBidirectionalEvent` however it was created. (Every tested path in this repo goes through `SignBidirectional`; before relying on `Execute`-direct, confirm the MPC's `indexer_canton` triggers on the `SignBidirectionalEvent` **create**, not specifically on a `Signer` exercise.)
-
-**2. The MPC root secp256k1 public key** (uncompressed, hex). You derive two children from it off-ledger with the Canton KDF — `ε = keccak256(prefix : chainId : predecessorId : path)`, child = `rootPub + ε·G`. The exact prefix (`"sig.network v2.0.0 epsilon derivation"`) and the `canton:global` chain id are the source of truth in signet.js — see [`deriveChildPublicKey`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/utils/cryptography.ts#L90-L122) and [`KDF_CHAIN_IDS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L35-L39). For Canton, `predecessorId = sender = operatorsHash`:
+**2. The MPC root secp256k1 public key** (uncompressed, hex). Derive two children off-ledger with the Canton KDF — `ε = keccak256(prefix : chainId : predecessorId : path)`, child = `rootPub + ε·G`, with `predecessorId = sender = operatorsHash`. The prefix (`"sig.network v2.0.0 epsilon derivation"`) and `canton:global` chain id are authoritative in signet.js: [`deriveChildPublicKey`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/utils/cryptography.ts#L90-L122), [`KDF_CHAIN_IDS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L35-L39):
 
 - The **EVM child address** (`path` = whatever you pass on `SignRequest`; `canton-sig`'s `deriveDepositAddress` does this in one call).
 - The **response-verification pubkey** for constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).

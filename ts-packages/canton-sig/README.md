@@ -121,7 +121,7 @@ const claimTx = await canton.exerciseChoice(
 const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 ```
 
-`pollForContract` is whatever you implement on top of `canton.getActiveContracts` or `createLedgerStream`. The full runnable version (party allocation, faucet funding, gas fetch, polling, withdrawal + refund) is `test/src/test/helpers/e2e-setup.ts` in this repo and is the recommended starting point.
+`pollForContract` is whatever you implement on top of `canton.getActiveContracts` or `createLedgerStream`. The full runnable version (party allocation, faucet funding, gas fetch, polling, withdrawal + refund) is `test/src/test/devnet-e2e.test.ts` in this repo and is the recommended starting point.
 
 ## Security caveats for integrators
 
@@ -141,7 +141,7 @@ Canton-format hex is bare lowercase hex, no `0x` prefix; `""` represents empty b
 `requestId` is `computeRequestId(sender, txParams, caip2Id, keyVersion, path, algo, dest, params)`:
 
 - `sender` — the operatorsHash. Set on-ledger by `SignRequest.Execute`; never user-supplied. Mirror it off-chain with the snippet above to verify.
-- `caip2Id` — `chainIdHexToCaip2(evmTxParams.chainId)` (e.g. `"eip155:11155111"`).
+- `caip2Id` — must equal whatever the Vault used, **not** necessarily the signed chainId. The test-mode Vault hardcodes `"eip155:1"` while signing for Sepolia (`11155111`) — a devnet workaround; on mainnet the chain is genuinely `eip155:1`, so `chainIdHexToCaip2(evmTxParams.chainId)` matches and no hardcode is needed. Use whichever the Vault uses, or the recomputed `requestId` won't match.
 - `keyVersion` — `KEY_VERSION` (`1`).
 - `path` — what you passed in. The Vault prefixes with `${vaultId},${requester},` for deposits and uses `${vaultId},root` internally for the sweep address.
 - `algo`, `dest`, `params` — always `""`.
