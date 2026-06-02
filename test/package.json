@@ -5,10 +5,8 @@
   "scripts": {
     "test": "vitest run",
     "check:types": "tsc --noEmit",
-    "sepolia:preflight": "tsx src/scripts/sepolia-preflight.ts",
     "daml:build": "cd .. && dpm build --all",
     "daml:test": "cd .. && for pkg in daml-packages/*/; do (cd \"$pkg\" && dpm test) || exit 1; done",
-    "daml:sandbox": "cd .. && dpm sandbox --json-api-port 7575 --dar daml-packages/daml-vault/.daml/dist/daml-vault-0.0.1.dar",
     "codegen:api": "curl -sf http://localhost:7575/docs/openapi -o openapi.yaml && pnpm exec openapi-typescript openapi.yaml -o ../ts-packages/canton-sig/generated/api/ledger-api.ts",
     "codegen:daml": "cd .. && dpm codegen-js daml-packages/daml-signer/.daml/dist/daml-signer-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js && dpm codegen-js daml-packages/daml-vault/.daml/dist/daml-vault-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js",
     "codegen": "pnpm run codegen:daml && pnpm run codegen:api",
@@ -17,7 +15,6 @@
   },
   "devDependencies": {
     "openapi-typescript": "^7.13.0",
-    "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },

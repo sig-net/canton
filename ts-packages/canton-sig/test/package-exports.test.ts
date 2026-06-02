@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { existsSync } from "node:fs";
 import {
-  MpcServer,
   CantonClient,
   DAR_PATH,
   Signer,
@@ -11,11 +10,6 @@ import {
 } from "canton-sig";
 
 describe("package exports (ESM)", () => {
-  it("exports MpcServer class", () => {
-    expect(MpcServer).toBeDefined();
-    expect(typeof MpcServer).toBe("function");
-  });
-
   it("exports CantonClient class", () => {
     expect(CantonClient).toBeDefined();
     expect(typeof CantonClient).toBe("function");
@@ -25,12 +19,6 @@ describe("package exports (ESM)", () => {
     expect(typeof DAR_PATH).toBe("string");
     expect(DAR_PATH).toContain("daml-vault-0.0.1.dar");
   });
-
-  it("MpcServer constructor requires config", () =>
-    expect(() => {
-      // @ts-expect-error — intentionally calling without args to verify it throws
-      return new MpcServer();
-    }).toThrow());
 
   it("CantonClient can be instantiated with default URL", () => {
     expect(new CantonClient()).toBeInstanceOf(CantonClient);
@@ -62,7 +50,6 @@ describe("package exports (CJS via dist)", () => {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const cjs: Record<string, unknown> = require("canton-sig");
 
-    expect(typeof cjs.MpcServer).toBe("function");
     expect(typeof cjs.CantonClient).toBe("function");
     expect(typeof cjs.DAR_PATH).toBe("string");
     expect(existsSync(cjs.DAR_PATH as string)).toBe(true);

@@ -29,8 +29,6 @@ type Command = components["schemas"]["Command"];
 export type DisclosedContract = components["schemas"]["DisclosedContract"];
 /** Response from `POST /v2/commands/submit-and-wait-for-transaction`. */
 export type TransactionResponse = components["schemas"]["JsSubmitAndWaitForTransactionResponse"];
-/** A single update item from the `POST /v2/updates` response. */
-export type JsGetUpdatesResponse = components["schemas"]["JsGetUpdatesResponse"];
 
 /** Throw on openapi-fetch error envelopes; otherwise unwrap the typed `data`. */
 function unwrap<T>(op: string, result: { data?: T; error?: unknown }): T {
@@ -77,13 +75,40 @@ type ActiveContractEntry = {
   synchronizerId: string;
 };
 
+/** Optional configuration for {@link CantonClient}. */
+export interface CantonClientOptions {
+  /**
+   * Async bearer-token provider. When set, every JSON Ledger API request (and
+   * DAR upload) is sent with an `Authorization: Bearer <token>` header; return
+   * `null`/`undefined` to send the request unauthenticated.
+   *
+   * Called once per request, so cache the token inside the provider — e.g. an
+   * OIDC client-credentials token reused until shortly before it expires. A
+   * local `dpm sandbox` needs no auth (omit this); a hosted participant such as
+   * Canton DevNet does.
+   */
+  getToken?: () => Promise<string | null | undefined>;
+}
+
 export class CantonClient {
   readonly baseUrl: string;
   private client: ReturnType<typeof createClient<paths>>;
+  private readonly getToken?: () => Promise<string | null | undefined>;
 
-  constructor(baseUrl = DEFAULT_BASE_URL) {
+  constructor(baseUrl = DEFAULT_BASE_URL, options: CantonClientOptions = {}) {
     this.baseUrl = baseUrl;
+    this.getToken = options.getToken;
     this.client = createClient<paths>({ baseUrl });
+    if (this.getToken) {
+      const getToken = this.getToken;
+      this.client.use({
+        async onRequest({ request }) {
+          const token = await getToken();
+          if (token) request.headers.set("Authorization", `Bearer ${token}`);
+          return request;
+        },
+      });
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -274,10 +299,16 @@ export class CantonClient {
     const darBytes = fs.readFileSync(darPath);
     const maxAttempts = 20;
 
+    const headers: Record<string, string> = { "Content-Type": "application/octet-stream" };
+    if (this.getToken) {
+      const token = await this.getToken();
+      if (token) headers.Authorization = `Bearer ${token}`;
+    }
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const res = await fetch(`${this.baseUrl}/v2/dars?vetAllPackages=true`, {
         method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
+        headers,
         body: darBytes,
       });
       if (res.ok) return;
@@ -408,15 +439,15 @@ export class CantonClient {
   }
 
   // ---------------------------------------------------------------------------
-  // Ledger state & updates
+  // Ledger state
   // ---------------------------------------------------------------------------
 
   /**
    * Get the current ledger end offset via `GET /v2/state/ledger-end`.
    *
    * The offset is a monotonically increasing number representing the latest
-   * committed transaction position. Useful as the `beginExclusive` boundary
-   * for {@link getUpdates} to avoid replaying historical transactions.
+   * committed transaction position. Useful as the `activeAtOffset` snapshot
+   * boundary for active-contract queries.
    *
    * @returns The current ledger-end offset.
    * @throws On communication errors.
@@ -425,54 +456,6 @@ export class CantonClient {
    */
   async getLedgerEnd(): Promise<number> {
     return unwrap("getLedgerEnd", await this.client.GET("/v2/state/ledger-end")).offset;
-  }
-
-  /**
-   * Fetch ledger updates since a given offset via `POST /v2/updates`.
-   *
-   * This is a blocking HTTP call — the server holds the connection open
-   * until either new updates arrive or `idleTimeoutMs` elapses. Suitable for
-   * small result sets; the server returns `413 Content Too Large` if the
-   * response exceeds its `http-list-max-elements-limit` configuration.
-   *
-   * For continuous streaming prefer the WebSocket transport in
-   * {@link ../ledger-stream.ts | createLedgerStream}.
-   *
-   * @param beginExclusive - Offset to start from (exclusive). Use
-   *   {@link getLedgerEnd} to get the current position.
-   * @param parties - Parties whose visible updates should be included.
-   * @param idleTimeoutMs - Server-side idle timeout in ms before the
-   *   connection closes with an empty batch (default `2000`).
-   * @returns Array of update items (transactions, reassignments, topology transactions, or offset checkpoints).
-   * @throws On communication or server errors.
-   *
-   * @see {@link https://docs.digitalasset.com/build/3.4/reference/json-api/openapi.html | POST /v2/updates}
-   */
-  async getUpdates(
-    beginExclusive: number,
-    parties: string[],
-    idleTimeoutMs = 2000,
-  ): Promise<JsGetUpdatesResponse[]> {
-    return unwrap(
-      "getUpdates",
-      await this.client.POST("/v2/updates", {
-        params: { query: { stream_idle_timeout_ms: idleTimeoutMs } },
-        body: {
-          beginExclusive,
-          // Use updateFormat (Canton 3.4+) — legacy filter/verbose removed in 3.5
-          verbose: true, // required by TS types for backwards compat, ignored when updateFormat is set
-          updateFormat: {
-            includeTransactions: {
-              transactionShape: "TRANSACTION_SHAPE_ACS_DELTA",
-              eventFormat: {
-                filtersByParty: Object.fromEntries(parties.map((p) => [p, {}])),
-                verbose: true,
-              },
-            },
-          },
-        },
-      }),
-    );
   }
 
   /**

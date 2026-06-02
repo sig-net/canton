@@ -13,7 +13,7 @@ done
 
 > `dpm test` does not support `--all` — each package must be tested individually.
 
-### TypeScript oracle suites (no sandbox needed)
+### TypeScript oracle suites (no ledger needed)
 
 Co-located TS tests that verify Daml logic against reference implementations (viem, etc.):
 
@@ -21,45 +21,24 @@ Co-located TS tests that verify Daml logic against reference implementations (vi
 pnpm -r --filter='@canton/*' --filter='canton-sig' run test
 ```
 
-### Canton sandbox
+### DevNet e2e (real network — the only integration test)
 
-Required for integration tests and codegen:api. Start in a separate terminal:
-
-```bash
-dpm sandbox --json-api-port 7575 --dar daml-packages/daml-vault/.daml/dist/daml-vault-0.0.1.dar
-```
-
-Wait for `Canton sandbox is ready` or poll `curl -sf http://localhost:7575/docs/openapi`.
-
-### Integration tests (sandbox required)
+`test/src/test/devnet-e2e.test.ts` runs the ERC-20 Vault deposit + withdraw lifecycle against the live Canton DevNet, the deployed MPC cluster, and the DevNet EVM chain. There is **no** local sandbox and **no** in-process MPC — it is a pure client. It mutates the live ledger and spends real funds, so it runs only when `test/.env` is configured AND `MPC_CANTON_LIVE_MUTATE=1`:
 
 ```bash
-# 1. Build DAR and regenerate codegen (required after Daml changes)
-dpm build --all
-cd test && pnpm codegen:daml
-
-# 2. Generate OpenAPI types (requires running sandbox)
-cd test && pnpm codegen:api
-
-# 3. Build the canton-sig library
-cd ts-packages/canton-sig && pnpm build
-
-# 4. Run integration tests
-cd test && pnpm test
+cd test && MPC_CANTON_LIVE_MUTATE=1 pnpm test
 ```
 
-### Sepolia E2E tests
+The pre-deployed Vault derives `caip2 = eip155:<tx chainId>` and the deployed MPC accepts only `eip155:1`, so the test signs txs with **chainId 1** and broadcasts to `MPC_CANTON_ETH_RPC_URL`.
 
-Requires `test/.env` with `SEPOLIA_RPC_URL`, `MPC_ROOT_PRIVATE_KEY`, `MPC_ROOT_PUBLIC_KEY`, and a funded faucet. `FAUCET_PRIVATE_KEY` can be set separately; it defaults to `MPC_ROOT_PRIVATE_KEY` if unset. These tests run alongside integration tests when env vars are set.
+For a local loop (a real MPC against a local sandbox), see `TEST_LOCALLY.md` (Rust `mpc` repo).
 
-```bash
-cd test
-pnpm sepolia:preflight    # verify faucet balances
-pnpm test                 # runs all tests including Sepolia e2e when env is set
-```
+### Regenerating bindings
+
+`cd test && pnpm codegen:daml` after Daml changes. `pnpm codegen:api` needs a reachable Canton JSON API on `:7575` (e.g. the local sandbox from `TEST_LOCALLY.md`, or DevNet).
 
 ## Project layout
 
 - `daml-packages/` -- Daml source packages (`daml-signer` + `daml-vault` DARs, plus shared libs)
-- `ts-packages/` -- TypeScript packages (`canton-sig` library)
-- `test/` -- Integration & e2e tests
+- `ts-packages/` -- TypeScript client packages (`canton-sig`)
+- `test/` -- DevNet e2e + co-located unit tests
