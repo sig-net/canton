@@ -229,7 +229,7 @@ const calldata = `a9059cbb${args}`;
 ```yaml
 # daml.yaml
 data-dependencies:
-  - ../daml-vault/.daml/dist/daml-vault-0.0.1.dar
+  - ../daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar
   - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
   - ../daml-abi/.daml/dist/daml-abi-0.0.1.dar
   - ../daml-eip712/.daml/dist/daml-eip712-0.0.1.dar

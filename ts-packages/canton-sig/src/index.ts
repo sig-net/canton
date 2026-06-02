@@ -60,7 +60,7 @@ export {
   Erc20Holding,
   PendingDeposit,
   PendingWithdrawal,
-} from "@daml.js/daml-vault-0.0.1/lib/Erc20Vault/module";
+} from "@daml.js/daml-vault-poc-0.0.1/lib/Erc20Vault/module";
 
 // DAR path (resolves to dist/ after build)
-export const DAR_PATH = fileURLToPath(new URL("daml-vault-0.0.1.dar", import.meta.url));
+export const DAR_PATH = fileURLToPath(new URL("daml-vault-poc-0.0.1.dar", import.meta.url));

@@ -20,7 +20,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsdown && cp ../../daml-packages/daml-vault/.daml/dist/daml-vault-0.0.1.dar dist/",
+    "build": "tsdown && cp ../../daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar dist/",
     "check:types": "tsc --noEmit",
     "prepack": "pnpm run build",
     "release": "pnpm run build && pnpm publish --access public",
@@ -39,7 +39,7 @@
   },
   "devDependencies": {
     "@daml.js/daml-signer-0.0.1": "file:./generated/model/daml-signer-0.0.1",
-    "@daml.js/daml-vault-0.0.1": "file:./generated/model/daml-vault-0.0.1",
+    "@daml.js/daml-vault-poc-0.0.1": "file:./generated/model/daml-vault-poc-0.0.1",
     "@types/node": "^25.3.0",
     "viem": "^2.46.3",
     "tsdown": "^0.21.4",

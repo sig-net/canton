@@ -190,7 +190,7 @@ Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 
 ### Re-exported Daml templates
 
-From `@daml.js/daml-signer-0.0.1` and `@daml.js/daml-vault-0.0.1`: `Signer`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `SignRequest`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
+From `@daml.js/daml-signer-0.0.1` and `@daml.js/daml-vault-poc-0.0.1`: `Signer`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `SignRequest`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
 
 ### Types
 

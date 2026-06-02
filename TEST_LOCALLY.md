@@ -61,7 +61,7 @@ The harness loads a checked-in copy of this repo's `daml-vault` DAR (`integratio
 # in THIS repo
 dpm build --all
 # in the mpc repo
-cp <this-repo>/daml-packages/daml-vault/.daml/dist/daml-vault-0.0.1.dar \
+cp <this-repo>/daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar \
    integration-tests/fixtures/canton/daml-vault-0.0.1.dar
 ```
 

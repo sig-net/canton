@@ -14,7 +14,7 @@
  */
 import "dotenv/config";
 import { fileURLToPath } from "node:url";
-import { keccak256, type Hex } from "viem";
+import { keccak256 } from "viem";
 import { utils as signetUtils } from "signet.js";
 import {
   CantonClient,
@@ -102,7 +102,9 @@ async function main(): Promise<void> {
   const canton = new CantonClient(JSON_API_URL, { getToken });
   console.log(`[deploy] Target ledger: ${JSON_API_URL}`);
   console.log(`[deploy] Party:         ${PARTY}`);
-  console.log(`[deploy] Mode:          ${CONFIRM ? "DEPLOY (live mutate)" : "DRY-RUN (no changes)"}`);
+  console.log(
+    `[deploy] Mode:          ${CONFIRM ? "DEPLOY (live mutate)" : "DRY-RUN (no changes)"}`,
+  );
   await canton.getLedgerEnd(); // preflight auth
 
   // Which daml-vault packages are already vetted?

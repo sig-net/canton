@@ -78,7 +78,9 @@ async function main(): Promise<void> {
   const canton = new CantonClient(JSON_API_URL, { getToken: makeTokenProvider() });
   console.log(`[cleanup] Target ledger: ${JSON_API_URL}`);
   console.log(`[cleanup] Party:         ${PARTY}`);
-  console.log(`[cleanup] Mode:          ${CONFIRM ? "ARCHIVE (live mutate)" : "DRY-RUN (no changes)"}`);
+  console.log(
+    `[cleanup] Mode:          ${CONFIRM ? "ARCHIVE (live mutate)" : "DRY-RUN (no changes)"}`,
+  );
   await canton.getLedgerEnd(); // preflight: OIDC auth + reachability
 
   // 1) Enumerate every target template.
@@ -97,7 +99,9 @@ async function main(): Promise<void> {
     return;
   }
   if (!CONFIRM) {
-    console.log("[cleanup] DRY-RUN — re-run with CLEANUP_CONFIRM=1 to archive the contracts listed above.");
+    console.log(
+      "[cleanup] DRY-RUN — re-run with CLEANUP_CONFIRM=1 to archive the contracts listed above.",
+    );
     return;
   }
 
@@ -112,7 +116,9 @@ async function main(): Promise<void> {
         console.log(`[cleanup] archived  ${e.contractId}  (${template})`);
       } catch (err) {
         failed++;
-        console.error(`[cleanup] FAILED    ${e.contractId}  (${template}): ${(err as Error).message}`);
+        console.error(
+          `[cleanup] FAILED    ${e.contractId}  (${template}): ${(err as Error).message}`,
+        );
       }
     }
   }

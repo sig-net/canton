@@ -21,7 +21,7 @@ rewards for Signet's Canton/MPC bridge architecture.
   **submitter pays** the traffic while the **confirmer earns** it.
 - For Signet: register a `FeaturedAppRight`, then make the Signet provider
   party a **confirmer (signatory)** on the traffic worth monetizing. Today
-  Signet only confirms its own MPC *response* evidence; the high-value asset
+  Signet only confirms its own MPC _response_ evidence; the high-value asset
   movements in the vault are confirmed by operators/users, not Signet.
 
 ## 1. The current reward model (verified against official docs)
@@ -46,7 +46,7 @@ Mechanics that matter:
 
 - **Bytes, not value.** The reward formula has no value term — only traffic:
   `per_app_minting_allowance0 = (total_app_traffic / 1e6) *
-  traffic_price_in_CC_per_MB * issuance_per_featured_app_weight`. It measures
+traffic_price_in_CC_per_MB * issuance_per_featured_app_weight`. It measures
   "the actual burn contributed by all activity of an app provider party by
   default."
 - **Confirmer = signatory or acting party.** In Canton, signatories and the
@@ -58,7 +58,7 @@ Mechanics that matter:
   traffic dilutes everyone.
 - **Submitter pays, confirmer earns.** "The sequencer continues to charge the
   traffic cost of a submission to the submitting validator node." Only
-  confirmation *responses* became free; the confirmation *request* traffic you
+  confirmation _responses_ became free; the confirmation _request_ traffic you
   earn on is paid by whoever submits.
 - **Threshold & coupon.** Per-party rewards below `appRewardCouponThreshold`
   (default $0.50/round) are burned; otherwise SV automation creates exactly one
@@ -68,7 +68,7 @@ Mechanics that matter:
 **Rollout status (as of mid-2026).** Increment 1 (free confirmation responses)
 shipped in Splice 0.5.11 (~Mar 2); Increments 2–3 (per-envelope traffic cost and
 app activity records on Scan) shipped in 0.5.18. Increment 4 — the actual switch
-of reward *computation* to traffic, which removes marker/coupon creation from
+of reward _computation_ to traffic, which removes marker/coupon creation from
 `splice-amulet` — must land ≥30 days after Increment 2 and was not confirmed
 live at the time of writing. **Until Increment 4 cuts over, activity markers
 remain the live earning mechanism**, so the superseded mechanisms below still
@@ -84,8 +84,8 @@ function in the interim.
   by a fair-use rule ("only asset transfers or equivalent; no intermediate
   steps"). Traffic-based rewards have **no value/intermediary gate** — any
   state-changing view you confirm earns by its bytes. The SVs removed the gate
-  deliberately ("app markers were found to be too limiting"). *But the value
-  layer is still strategically best — see §4.*
+  deliberately ("app markers were found to be too limiting"). _But the value
+  layer is still strategically best — see §4._
 - **Passive beneficiary earning is dead.** Beneficiaries survive only as a way
   for a **confirming earner** to split its own round allowance at minting time
   (the same construction used for SV-reward beneficiaries; automation left to
@@ -100,25 +100,25 @@ function in the interim.
   and deprecated the `transfer-preapproval/prepare-send` and `/submit-send`
   validator endpoints. Post-cutover, a CC transfer simply generates confirmation
   traffic like any other transaction — you earn on it only if your featured
-  party confirms it. Charging a real CC fee remains a fine *business* model, but
+  party confirms it. Charging a real CC fee remains a fine _business_ model, but
   it is not a separate rewards lever.
 - **"The signer is a weak reward surface" partially flips.** Under markers
   (value-based) the signing layer was weak. Under traffic (byte-based), the
   signing-evidence contracts are byte-heavy (calldata, serialized output, DER
-  signatures) and **do** earn — *if* Signet confirms them. See §3–§4.
+  signatures) and **do** earn — _if_ Signet confirms them. See §3–§4.
 
 ## 3. Where Signet confirms today (code mapping)
 
 `sigNetwork` is Signet's MPC/provider party. Reward eligibility per contract, as
 the templates stand today:
 
-| Contract | `sigNetwork` role today | Confirmer? | Earns? |
-| --- | --- | --- | --- |
-| `SignatureRespondedEvent` (`Signer.daml:191`) | **signatory** | yes | ✅ |
-| `RespondBidirectionalEvent` (`Signer.daml:214`) | **signatory** | yes | ✅ |
-| `SignBidirectionalEvent` (`Signer.daml:161`) | observer | no | ❌ |
-| `Vault` (`Erc20Vault.daml:166`) | observer | no | ❌ |
-| `Erc20Holding` (`Erc20Vault.daml:80`) | not even observer | no | ❌ |
+| Contract                                        | `sigNetwork` role today | Confirmer? | Earns? |
+| ----------------------------------------------- | ----------------------- | ---------- | ------ |
+| `SignatureRespondedEvent` (`Signer.daml:191`)   | **signatory**           | yes        | ✅     |
+| `RespondBidirectionalEvent` (`Signer.daml:214`) | **signatory**           | yes        | ✅     |
+| `SignBidirectionalEvent` (`Signer.daml:161`)    | observer                | no         | ❌     |
+| `Vault` (`Erc20Vault.daml:166`)                 | observer                | no         | ❌     |
+| `Erc20Holding` (`Erc20Vault.daml:80`)           | not even observer       | no         | ❌     |
 
 Key point: Signet already signs (and therefore confirms) the MPC **response**
 evidence — but it is the **submitter** of those `Signer.Respond` /
@@ -175,7 +175,7 @@ worth it for marginal extra bytes; capture request-side value via Tier 1.
 
 **Maximization tactics (inside fair use):**
 
-- **Be the sole *featured* confirmer.** Keep `operators` as non-featured
+- **Be the sole _featured_ confirmer.** Keep `operators` as non-featured
   signatories: they confirm (fine for authorization) but, lacking a
   `FeaturedAppRight`, do not dilute Signet's `num_app_confirmers`. Signet then
   captures the full app-weight on those envelopes.
@@ -185,13 +185,13 @@ worth it for marginal extra bytes; capture request-side value via Tier 1.
 - **Aggregate above the $0.50/round threshold** under one provider party;
   sub-threshold rewards are burned.
 - **Use beneficiaries the other direction** — when Signet is the confirming
-  earner, split its allowance *out* to integrators/operators as a revenue-share
+  earner, split its allowance _out_ to integrators/operators as a revenue-share
   (a payout tool, downstream of earning).
 
 ## 5. Custody & governance tradeoff (updated)
 
-Earning under traffic-based rewards *requires* confirmer status, and confirmer
-status *is* co-authorization — so the reward goal and a minimal-authority,
+Earning under traffic-based rewards _requires_ confirmer status, and confirmer
+status _is_ co-authorization — so the reward goal and a minimal-authority,
 non-custodial signing design are in direct tension. The balanced position is
 **shared authorization**: `operators` remain the multisig authority, and the
 Signet provider party is additionally required only on the Signet-backed
@@ -218,7 +218,7 @@ carries no such field (`indexer_canton/mod.rs`). That is correct, and putting a
 value in that field would **not** charge anyone:
 
 - The `deposit` field is **not a collection mechanism** — it mirrors a value the
-  *source chain* enforces, used only as a gate. On EVM, Solana, and Hydration
+  _source chain_ enforces, used only as a gate. On EVM, Solana, and Hydration
   the indexer does `if deposit == 0 { skip sign request }`
   (`indexer_eth/mod.rs:375`, `indexer_sol.rs:168/241`,
   `indexer_hydration.rs:128/253`); the funds are held/enforced by the
@@ -231,12 +231,12 @@ in Daml: compose an on-ledger **token-standard Canton Coin transfer** of the fee
 to the Signet party as part of the request flow — atomically, or as a verified
 precondition, before `SignBidirectionalEvent` is created. That puts the
 "no fee → no signature" gate on-ledger where Canton value actually moves. The
-node-side `deposit` may then *mirror* that amount for parity with other chains;
+node-side `deposit` may then _mirror_ that amount for parity with other chains;
 it reflects a real payment, never is one. Use token-standard transfers, not the
 `TransferCommand` `prepare-send`/`submit-send` endpoints deprecated by CIP-0107.
 
 **Survival.** A CC service fee is **durable revenue** — payment for Signet's
-service, untouched by CIP-0104/0107. But it is *revenue, not a reward*: any
+service, untouched by CIP-0104/0107. But it is _revenue, not a reward_: any
 protocol reward on the fee transfer comes solely from Signet **confirming that
 transfer's traffic** (modest — one small transfer), not from a dedicated CC
 reward path. The real reward surface remains Tier 1 (§4).

@@ -3,7 +3,9 @@
   "ignoreBinaries": ["dpm", "build"],
   "ignore": [],
   "workspaces": {
-    "test": {},
+    "test": {
+      "entry": ["src/scripts/*.ts", "src/test/**/*.test.ts"]
+    },
     "ts-packages/canton-sig": {
       "ignoreDependencies": ["@daml/types", "@mojotech/json-type-validation"]
     }
