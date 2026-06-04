@@ -51,10 +51,18 @@ import {
   submitRawTransaction,
   toCantonHex,
   KEY_VERSION,
+  getCurrentFeeDisclosure,
+  getTransferFactoryForFee,
+  selectInputHoldings,
+  holdingInputsFromEvents,
+  assembleFeeChoiceArgs,
+  collectFeeDisclosures,
+  HOLDING_INTERFACE_ID,
 } from "canton-sig";
 import type {
   CreatedEvent,
   DisclosedContract,
+  FeeChoiceArgs,
   CantonEvmType2Params,
   Vault,
   PendingDeposit,
@@ -77,7 +85,6 @@ const SEPOLIA_CHAIN_ID = 11155111n; // signed into every tx; valid on Sepolia
 const VAULT_CAIP2 = "eip155:1";
 const GAS_LIMIT = 100_000n;
 const DEPOSIT_AMOUNT = 1_000_000_000_000_000n; // 0.001 token (18 decimals)
-const FAUCET_ETH_AMOUNT = 2_000_000_000_000_000n; // ~2× a transfer's gas
 const ERC20_TRANSFER_SELECTOR = "a9059cbb";
 const BOOL_SCHEMA = '[{"name":"","type":"bool"}]';
 const ABI_BOOL_TRUE = `${"0".repeat(63)}1`;
@@ -86,10 +93,15 @@ const DEST = "ethereum";
 
 const POLL_INTERVAL_MS = 5_000;
 const SIGN_TIMEOUT_MS = 180_000; // wait for the MPC to threshold-sign
-// The outcome leg can take minutes: the node waits for on-chain confirmation depth.
+// The outcome leg waits for on-chain *finality*, which can exceed 15 min — bump
+// MPC_CANTON_RESPOND_TIMEOUT_MS (the spec budget below tracks it) accordingly.
 const RESPOND_TIMEOUT_MS = Number(process.env.MPC_CANTON_RESPOND_TIMEOUT_MS ?? 300_000);
 // Prime the MPC's outcome-watcher before the tx lands (guards a broadcast-before-watch race).
 const BROADCAST_DELAY_MS = Number(process.env.MPC_CANTON_BROADCAST_DELAY_MS ?? 20_000);
+// Per-spec vitest budget must outlast sign + broadcast delay + the finality-gated respond wait
+// (plus slack for funding and the on-ledger exercises); otherwise the spec times out before
+// RESPOND_TIMEOUT_MS can elapse and the respond knob is capped at the old hardcoded 15 min.
+const SPEC_TIMEOUT_MS = SIGN_TIMEOUT_MS + BROADCAST_DELAY_MS + RESPOND_TIMEOUT_MS + 180_000;
 
 // ── Env ───────────────────────────────────────────────────────────────────────--
 const EnvSchema = z.object({
@@ -122,6 +134,12 @@ const EnvSchema = z.object({
       /^(secp256k1:[1-9A-HJ-NP-Za-km-z]+|04[0-9a-fA-F]{128})$/,
       "NAJ (secp256k1:base58) or uncompressed SEC1 (04 + 128 hex)",
     ),
+  // CC token-standard registry base URL — resolves the TransferFactory + its
+  // disclosures (AmuletRules/OpenMiningRound) for the signature fee. Required:
+  // the new Daml charges the fee on every RequestDeposit/RequestWithdrawal, and
+  // the SignerFeeConfig + receiver preapproval must already be standing
+  // (see proposals/cc-signature-fee-runbook.md).
+  MPC_CANTON_CC_REGISTRY_URL: z.url(),
   // Sepolia RPC — we fund derived addresses and broadcast the MPC-signed txs here.
   MPC_CANTON_ETH_RPC_URL: z.url(),
   FAUCET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "0x + 64 hex"),
@@ -250,8 +268,12 @@ async function fundFromFaucet(target: Hex, erc20Amount: bigint): Promise<void> {
     chain: sepolia,
     transport: http(env!.MPC_CANTON_ETH_RPC_URL),
   });
-  if ((await publicClient.getBalance({ address: target })) < FAUCET_ETH_AMOUNT) {
-    const hash = await walletClient.sendTransaction({ to: target, value: FAUCET_ETH_AMOUNT });
+  // The EVM reserves `gasLimit × maxFeePerGas` up front to broadcast from `target`, so fund that
+  // (×2 for headroom against gas drift between funding and the tx) instead of a fixed amount —
+  // a higher base fee otherwise under-funds the address and the broadcast is rejected.
+  const ethReserve = GAS_LIMIT * (await fetchGasParams()).maxFeePerGas * 2n;
+  if ((await publicClient.getBalance({ address: target })) < ethReserve) {
+    const hash = await walletClient.sendTransaction({ to: target, value: ethReserve });
     await publicClient.waitForTransactionReceipt({ hash });
   }
   if ((await erc20BalanceOf(target)) < erc20Amount) {
@@ -324,6 +346,43 @@ async function signAndBroadcast(
   return sigEvent.contractId;
 }
 
+/**
+ * Assemble the CC signature-fee inputs for one RequestDeposit / RequestWithdrawal.
+ *
+ * On DevNet a single party is requester = sigNetwork = feeReceiver, so the
+ * sigNetwork-only `SignerFeeConfig` is readable directly (party is its
+ * stakeholder) and the fee transfer is a self-transfer settled via the party's
+ * own `TransferPreapproval`. Requires the off-ledger fee infra to be standing
+ * (SignerFeeConfig posted, preapproval + featured-app right live) and the CC
+ * token-standard registry URL — see proposals/cc-signature-fee-runbook.md.
+ *
+ * Returns the four fee choice args (spread into the choice record) and the
+ * disclosures to append to the submission (fee config + factory/rules/round).
+ */
+async function prepareFeeInputs(): Promise<{
+  args: FeeChoiceArgs;
+  disclosures: DisclosedContract[];
+}> {
+  const fee = await getCurrentFeeDisclosure(canton, party);
+  const holdingEvents = await canton.getInterfaceContracts([party], HOLDING_INTERFACE_ID);
+  const selection = selectInputHoldings(
+    holdingInputsFromEvents(holdingEvents),
+    fee.config.feeAmount,
+  );
+  const factory = await getTransferFactoryForFee(env!.MPC_CANTON_CC_REGISTRY_URL, {
+    sender: party,
+    feeReceiver: fee.config.feeReceiver,
+    instrumentAdmin: fee.config.instrumentAdmin,
+    instrumentId: fee.config.instrumentId,
+    amount: fee.config.feeAmount,
+    inputHoldingCids: selection.inputHoldingCids,
+  });
+  return {
+    args: assembleFeeChoiceArgs(fee, factory, selection),
+    disclosures: collectFeeDisclosures(fee, factory),
+  };
+}
+
 // ── Specs ─────────────────────────────────────────────────────────────────────--
 describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
   let holdingCid: string | undefined;
@@ -373,194 +432,208 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
     );
   }, 120_000);
 
-  it("deposits ERC-20 into the vault via the MPC", async () => {
-    const subPath = `devnet-e2e,${Date.now()}`; // unique → fresh deposit address (nonce 0)
-    const fullPath = `${vaultId},${party},${subPath}`; // matches Vault: vaultId,<requester>,<path>
-    const depositAddress = deriveDepositAddress(rootPubKey, predecessorId, fullPath);
+  it(
+    "deposits ERC-20 into the vault via the MPC",
+    async () => {
+      const subPath = `devnet-e2e,${Date.now()}`; // unique → fresh deposit address (nonce 0)
+      const fullPath = `${vaultId},${party},${subPath}`; // matches Vault: vaultId,<requester>,<path>
+      const depositAddress = deriveDepositAddress(rootPubKey, predecessorId, fullPath);
 
-    // Fund the derived deposit address on the DevNet chain (ETH for gas + ERC-20 to deposit).
-    await fundFromFaucet(depositAddress, DEPOSIT_AMOUNT);
+      // Fund the derived deposit address on the DevNet chain (ETH for gas + ERC-20 to deposit).
+      await fundFromFaucet(depositAddress, DEPOSIT_AMOUNT);
 
-    const evmTxParams = await buildTransferParams(depositAddress, vaultAddress, DEPOSIT_AMOUNT);
+      const evmTxParams = await buildTransferParams(depositAddress, vaultAddress, DEPOSIT_AMOUNT);
 
-    // RequestDeposit (Vault + Signer disclosed) → PendingDeposit + SignBidirectionalEvent.
-    const depositResult = await canton.exerciseChoice(
-      userId,
-      [party],
-      VAULT_T,
-      env!.MPC_CANTON_VAULT_CONTRACT_ID,
-      "RequestDeposit",
-      {
-        requester: party,
-        signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
-        path: subPath,
+      // RequestDeposit (Vault + Signer + fee contracts disclosed) → PendingDeposit
+      // + SignBidirectionalEvent. The fee is charged atomically inside Execute.
+      const fee = await prepareFeeInputs();
+      const depositResult = await canton.exerciseChoice(
+        userId,
+        [party],
+        VAULT_T,
+        env!.MPC_CANTON_VAULT_CONTRACT_ID,
+        "RequestDeposit",
+        {
+          requester: party,
+          signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
+          path: subPath,
+          evmTxParams,
+          keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
+          algo: ALGO,
+          dest: DEST,
+          params: "",
+          outputDeserializationSchema: BOOL_SCHEMA,
+          respondSerializationSchema: BOOL_SCHEMA,
+          ...fee.args, // feeConfigCid, transferFactoryCid, inputHoldingCids, transferContext
+        },
+        undefined,
+        [vaultDisclosure, signerDisclosure, ...fee.disclosures],
+      );
+      const pending = findCreated(depositResult.transaction.events, "PendingDeposit");
+      const { requestId } = pending.createArgument as PendingDeposit;
+
+      // caip2 is hardcoded `eip155:1` in the Vault (test mode) and is decoupled from the
+      // signed Sepolia chainId; the requestId must use it to match the ledger (invariant below).
+      const caip2Id = VAULT_CAIP2;
+      const tsRequestId = computeRequestId(
+        predecessorId,
+        { tag: "EvmType2TxParams", value: evmTxParams },
+        caip2Id,
+        KEY_VERSION,
+        fullPath,
+        ALGO,
+        DEST,
+        "",
+      );
+      expect(tsRequestId.slice(2)).toBe(requestId);
+
+      // The MPC signs; we verify the signer and broadcast the deposit tx.
+      const signatureRespondedEventCid = await signAndBroadcast(
         evmTxParams,
-        keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
-        algo: ALGO,
-        dest: DEST,
-        params: "",
-        outputDeserializationSchema: BOOL_SCHEMA,
-        respondSerializationSchema: BOOL_SCHEMA,
-      },
-      undefined,
-      [vaultDisclosure, signerDisclosure],
-    );
-    const pending = findCreated(depositResult.transaction.events, "PendingDeposit");
-    const { requestId } = pending.createArgument as PendingDeposit;
+        requestId,
+        depositAddress,
+        "deposit",
+      );
 
-    // caip2 is hardcoded `eip155:1` in the Vault (test mode) and is decoupled from the
-    // signed Sepolia chainId; the requestId must use it to match the ledger (invariant below).
-    const caip2Id = VAULT_CAIP2;
-    const tsRequestId = computeRequestId(
-      predecessorId,
-      { tag: "EvmType2TxParams", value: evmTxParams },
-      caip2Id,
-      KEY_VERSION,
-      fullPath,
-      ALGO,
-      DEST,
-      "",
-    );
-    expect(tsRequestId.slice(2)).toBe(requestId);
+      // The MPC observes the on-chain outcome → RespondBidirectionalEvent.
+      const respondEvent = await pollForContract(
+        RESPOND_BIDIRECTIONAL_T,
+        (a) => a.requestId === requestId,
+        "RespondBidirectionalEvent (deposit)",
+        RESPOND_TIMEOUT_MS,
+      );
+      expect((respondEvent.createArgument as RespondBidirectionalEvent).serializedOutput).toBe(
+        ABI_BOOL_TRUE,
+      );
 
-    // The MPC signs; we verify the signer and broadcast the deposit tx.
-    const signatureRespondedEventCid = await signAndBroadcast(
-      evmTxParams,
-      requestId,
-      depositAddress,
-      "deposit",
-    );
+      // ClaimDeposit → Erc20Holding (ledger verifies the MPC outcome signature).
+      const claimResult = await canton.exerciseChoice(
+        userId,
+        [party],
+        VAULT_T,
+        env!.MPC_CANTON_VAULT_CONTRACT_ID,
+        "ClaimDeposit",
+        {
+          requester: party,
+          pendingDepositCid: pending.contractId,
+          respondBidirectionalEventCid: respondEvent.contractId,
+          signatureRespondedEventCid,
+        },
+        undefined,
+        [vaultDisclosure],
+      );
+      const holding = findCreated(claimResult.transaction.events, "Erc20Holding");
+      const holdingArgs = holding.createArgument as Erc20Holding;
+      expect(holdingArgs.owner).toBe(party);
+      expect(holdingArgs.operators).toEqual(operators);
+      expect(holdingArgs.amount).toBe(toCantonHex(DEPOSIT_AMOUNT, 32));
 
-    // The MPC observes the on-chain outcome → RespondBidirectionalEvent.
-    const respondEvent = await pollForContract(
-      RESPOND_BIDIRECTIONAL_T,
-      (a) => a.requestId === requestId,
-      "RespondBidirectionalEvent (deposit)",
-      RESPOND_TIMEOUT_MS,
-    );
-    expect((respondEvent.createArgument as RespondBidirectionalEvent).serializedOutput).toBe(
-      ABI_BOOL_TRUE,
-    );
+      holdingCid = holding.contractId;
+    },
+    SPEC_TIMEOUT_MS,
+  );
 
-    // ClaimDeposit → Erc20Holding (ledger verifies the MPC outcome signature).
-    const claimResult = await canton.exerciseChoice(
-      userId,
-      [party],
-      VAULT_T,
-      env!.MPC_CANTON_VAULT_CONTRACT_ID,
-      "ClaimDeposit",
-      {
-        requester: party,
-        pendingDepositCid: pending.contractId,
-        respondBidirectionalEventCid: respondEvent.contractId,
-        signatureRespondedEventCid,
-      },
-      undefined,
-      [vaultDisclosure],
-    );
-    const holding = findCreated(claimResult.transaction.events, "Erc20Holding");
-    const holdingArgs = holding.createArgument as Erc20Holding;
-    expect(holdingArgs.owner).toBe(party);
-    expect(holdingArgs.operators).toEqual(operators);
-    expect(holdingArgs.amount).toBe(toCantonHex(DEPOSIT_AMOUNT, 32));
+  it(
+    "withdraws the vault holding back out via the MPC",
+    async () => {
+      if (!holdingCid)
+        throw new Error("withdrawal requires the deposit test to have produced a holding");
 
-    holdingCid = holding.contractId;
-  }, 900_000);
+      // The vault address holds the deposited ERC-20 on-chain; ensure it also has gas ETH.
+      await fundFromFaucet(vaultAddress, 0n);
 
-  it("withdraws the vault holding back out via the MPC", async () => {
-    if (!holdingCid)
-      throw new Error("withdrawal requires the deposit test to have produced a holding");
+      const recipient = privateKeyToAddress(env!.FAUCET_PRIVATE_KEY as Hex); // send tokens back to faucet
+      const recipientPadded = recipient.slice(2).toLowerCase().padStart(64, "0");
+      const balanceBefore = await erc20BalanceOf(recipient);
 
-    // The vault address holds the deposited ERC-20 on-chain; ensure it also has gas ETH.
-    await fundFromFaucet(vaultAddress, 0n);
+      const evmTxParams = await buildTransferParams(vaultAddress, recipient, DEPOSIT_AMOUNT);
 
-    const recipient = privateKeyToAddress(env!.FAUCET_PRIVATE_KEY as Hex); // send tokens back to faucet
-    const recipientPadded = recipient.slice(2).toLowerCase().padStart(64, "0");
-    const balanceBefore = await erc20BalanceOf(recipient);
+      // RequestWithdrawal (Vault + Signer + fee contracts disclosed) →
+      // PendingWithdrawal + SignBidirectionalEvent. Fee charged inside Execute.
+      const wdlFee = await prepareFeeInputs();
+      const wdlResult = await canton.exerciseChoice(
+        userId,
+        [party],
+        VAULT_T,
+        env!.MPC_CANTON_VAULT_CONTRACT_ID,
+        "RequestWithdrawal",
+        {
+          requester: party,
+          signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
+          evmTxParams,
+          recipientAddress: recipientPadded,
+          balanceCid: holdingCid,
+          keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
+          algo: ALGO,
+          dest: DEST,
+          params: "",
+          outputDeserializationSchema: BOOL_SCHEMA,
+          respondSerializationSchema: BOOL_SCHEMA,
+          ...wdlFee.args, // feeConfigCid, transferFactoryCid, inputHoldingCids, transferContext
+        },
+        undefined,
+        [vaultDisclosure, signerDisclosure, ...wdlFee.disclosures],
+      );
+      const pendingWdl = findCreated(wdlResult.transaction.events, "PendingWithdrawal");
+      const { requestId } = pendingWdl.createArgument as PendingWithdrawal;
 
-    const evmTxParams = await buildTransferParams(vaultAddress, recipient, DEPOSIT_AMOUNT);
+      // Withdrawal derivation path is the vault root: `${vaultId},root`. caip2 = eip155:1 (see deposit).
+      const caip2Id = VAULT_CAIP2;
+      const tsRequestId = computeRequestId(
+        predecessorId,
+        { tag: "EvmType2TxParams", value: evmTxParams },
+        caip2Id,
+        KEY_VERSION,
+        `${vaultId},root`,
+        ALGO,
+        DEST,
+        "",
+      );
+      expect(tsRequestId.slice(2)).toBe(requestId);
 
-    // RequestWithdrawal (Vault + Signer disclosed) → PendingWithdrawal + SignBidirectionalEvent.
-    const wdlResult = await canton.exerciseChoice(
-      userId,
-      [party],
-      VAULT_T,
-      env!.MPC_CANTON_VAULT_CONTRACT_ID,
-      "RequestWithdrawal",
-      {
-        requester: party,
-        signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
+      // The MPC signs (with the vault's child key); broadcast from the vault address.
+      const signatureRespondedEventCid = await signAndBroadcast(
         evmTxParams,
-        recipientAddress: recipientPadded,
-        balanceCid: holdingCid,
-        keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
-        algo: ALGO,
-        dest: DEST,
-        params: "",
-        outputDeserializationSchema: BOOL_SCHEMA,
-        respondSerializationSchema: BOOL_SCHEMA,
-      },
-      undefined,
-      [vaultDisclosure, signerDisclosure],
-    );
-    const pendingWdl = findCreated(wdlResult.transaction.events, "PendingWithdrawal");
-    const { requestId } = pendingWdl.createArgument as PendingWithdrawal;
+        requestId,
+        vaultAddress,
+        "withdrawal",
+      );
 
-    // Withdrawal derivation path is the vault root: `${vaultId},root`. caip2 = eip155:1 (see deposit).
-    const caip2Id = VAULT_CAIP2;
-    const tsRequestId = computeRequestId(
-      predecessorId,
-      { tag: "EvmType2TxParams", value: evmTxParams },
-      caip2Id,
-      KEY_VERSION,
-      `${vaultId},root`,
-      ALGO,
-      DEST,
-      "",
-    );
-    expect(tsRequestId.slice(2)).toBe(requestId);
+      const respondEvent = await pollForContract(
+        RESPOND_BIDIRECTIONAL_T,
+        (a) => a.requestId === requestId,
+        "RespondBidirectionalEvent (withdrawal)",
+        RESPOND_TIMEOUT_MS,
+      );
+      expect((respondEvent.createArgument as RespondBidirectionalEvent).serializedOutput).toBe(
+        ABI_BOOL_TRUE,
+      );
 
-    // The MPC signs (with the vault's child key); broadcast from the vault address.
-    const signatureRespondedEventCid = await signAndBroadcast(
-      evmTxParams,
-      requestId,
-      vaultAddress,
-      "withdrawal",
-    );
+      // CompleteWithdrawal: on success returns None — no refund Erc20Holding is created.
+      const completeResult = await canton.exerciseChoice(
+        userId,
+        [party],
+        VAULT_T,
+        env!.MPC_CANTON_VAULT_CONTRACT_ID,
+        "CompleteWithdrawal",
+        {
+          requester: party,
+          pendingWithdrawalCid: pendingWdl.contractId,
+          respondBidirectionalEventCid: respondEvent.contractId,
+          signatureRespondedEventCid,
+        },
+        undefined,
+        [vaultDisclosure],
+      );
+      const refund = (completeResult.transaction.events ?? []).find(
+        (e) => "CreatedEvent" in e && e.CreatedEvent.templateId.includes("Erc20Holding"),
+      );
+      expect(refund).toBeUndefined();
 
-    const respondEvent = await pollForContract(
-      RESPOND_BIDIRECTIONAL_T,
-      (a) => a.requestId === requestId,
-      "RespondBidirectionalEvent (withdrawal)",
-      RESPOND_TIMEOUT_MS,
-    );
-    expect((respondEvent.createArgument as RespondBidirectionalEvent).serializedOutput).toBe(
-      ABI_BOOL_TRUE,
-    );
-
-    // CompleteWithdrawal: on success returns None — no refund Erc20Holding is created.
-    const completeResult = await canton.exerciseChoice(
-      userId,
-      [party],
-      VAULT_T,
-      env!.MPC_CANTON_VAULT_CONTRACT_ID,
-      "CompleteWithdrawal",
-      {
-        requester: party,
-        pendingWithdrawalCid: pendingWdl.contractId,
-        respondBidirectionalEventCid: respondEvent.contractId,
-        signatureRespondedEventCid,
-      },
-      undefined,
-      [vaultDisclosure],
-    );
-    const refund = (completeResult.transaction.events ?? []).find(
-      (e) => "CreatedEvent" in e && e.CreatedEvent.templateId.includes("Erc20Holding"),
-    );
-    expect(refund).toBeUndefined();
-
-    // Recipient received the withdrawn amount on-chain.
-    const balanceAfter = await erc20BalanceOf(recipient);
-    expect(balanceAfter).toBe(balanceBefore + DEPOSIT_AMOUNT);
-  }, 900_000);
+      // Recipient received the withdrawn amount on-chain.
+      const balanceAfter = await erc20BalanceOf(recipient);
+      expect(balanceAfter).toBe(balanceBefore + DEPOSIT_AMOUNT);
+    },
+    SPEC_TIMEOUT_MS,
+  );
 });

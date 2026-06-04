@@ -18,7 +18,7 @@ For an executable end-to-end flow: `test/src/test/devnet-e2e.test.ts` runs depos
 
 ## Architecture in one paragraph
 
-The `Signer` is a singleton signed by the MPC party (`sigNetwork`) and disclosed to consumer contracts. A consumer choice creates a transient `SignRequest` (signed by `operators + requester`) and immediately exercises `Signer.SignBidirectional`, which derives the operator-set fingerprint on-chain (`sender = operatorsHash`) and emits a `SignBidirectionalEvent` for the MPC to watch. The consumer stores that event CID on its single-use pending anchor. The MPC derives a child secp256k1 key from the root key using KDF inputs `sender = operatorsHash` and the request `path`, threshold-signs the EVM transaction, and publishes the signature in `SignatureRespondedEvent`. **The consumer (or test/client) reads that signature, reconstructs the signed EIP-1559 tx, and submits it to the destination chain via `eth_sendRawTransaction`.** Once the receipt is observable, the MPC re-simulates the call to extract the ABI-encoded return data and publishes a `RespondBidirectionalEvent` whose signature (made with the response-verification child key derived with `sender = operatorsHash` and `path = "canton response key"` over `keccak256(requestId ‖ serializedOutput)`) is verified on-ledger by the consumer's claim choice via `secp256k1WithEcdsaOnly`. After validated claim/completion, the consumer archives the pending anchor, both response evidence contracts, and the original `SignBidirectionalEvent`. The `daml-vault` package is one consumer of this protocol; ERC-20 holdings, deposit anchors, and refund-on-failure withdrawal are domain logic on top of the generic Signer.
+The `Signer` is a singleton signed by the MPC party (`sigNetwork`) and disclosed to consumer contracts. A consumer choice creates a transient `SignRequest` (signed by `operators + requester`) and immediately exercises `Signer.SignBidirectional`, which derives the operator-set fingerprint on-chain (`sender = operatorsHash`), atomically charges the requester a Canton Coin signature fee (`requester → sigNetwork`, settled in-transaction via a token-standard `TransferFactory_Transfer` priced by a disclosed `SignerFeeConfig`; if it cannot settle, the event is never created — fail-closed), and emits a `SignBidirectionalEvent` for the MPC to watch. The consumer stores that event CID on its single-use pending anchor. The MPC derives a child secp256k1 key from the root key using KDF inputs `sender = operatorsHash` and the request `path`, threshold-signs the EVM transaction, and publishes the signature in `SignatureRespondedEvent`. **The consumer (or test/client) reads that signature, reconstructs the signed EIP-1559 tx, and submits it to the destination chain via `eth_sendRawTransaction`.** Once the receipt is observable, the MPC re-simulates the call to extract the ABI-encoded return data and publishes a `RespondBidirectionalEvent` whose signature (made with the response-verification child key derived with `sender = operatorsHash` and `path = "canton response key"` over `keccak256(requestId ‖ serializedOutput)`) is verified on-ledger by the consumer's claim choice via `secp256k1WithEcdsaOnly`. After validated claim/completion, the consumer archives the pending anchor, both response evidence contracts, and the original `SignBidirectionalEvent`. The `daml-vault` package is one consumer of this protocol; ERC-20 holdings, deposit anchors, and refund-on-failure withdrawal are domain logic on top of the generic Signer.
 
 Per-package details live in the documents listed under [Where to start](#where-to-start). Earlier design notes under `proposals/` describe pre-current iterations and may not reflect the shipped code.
 
@@ -38,10 +38,7 @@ After installing DPM, make sure `~/.dpm/bin` is on your `PATH`. The DevNet e2e t
 ### 1. Build the DAR and generate codegen
 
 ```bash
-dpm build --all
-cd test
-pnpm run codegen:daml
-pnpm install
+pnpm bootstrap     # dpm build --all + Daml codegen + pnpm install
 ```
 
 ### 2. Run tests
@@ -102,20 +99,22 @@ MPC_CANTON_LIVE_MUTATE=1 pnpm test
 
 ## Available Scripts
 
+From the repo root:
+
+| Script              | Description                                                               |
+| ------------------- | ------------------------------------------------------------------------- |
+| `pnpm bootstrap`    | Fresh-clone setup: build DARs + Daml codegen + install (no ledger needed) |
+| `pnpm daml:build`   | Build all DARs (`dpm build --all`)                                        |
+| `pnpm daml:test`    | Run every package's Daml Script tests                                     |
+| `pnpm codegen:daml` | Regenerate `@daml.js` bindings from the built DARs                        |
+| `pnpm codegen:api`  | Regenerate OpenAPI types (requires a reachable ledger on :7575)           |
+| `pnpm codegen`      | `codegen:daml` + `codegen:api`                                            |
+| `pnpm generate`     | Full clean rebuild: clean + DARs + codegen + install (needs a ledger)     |
+| `pnpm check`        | Typecheck + lint + knip + format check                                    |
+| `pnpm fix`          | Auto-fix lint + format                                                    |
+
 From `test/`:
 
-| Script              | Description                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------- |
-| `pnpm test`         | Run the test/ Vitest suite; the DevNet e2e runs only when configured + `MPC_CANTON_LIVE_MUTATE=1` |
-| `pnpm daml:build`   | Build the DAR                                                                                     |
-| `pnpm daml:test`    | Run Daml Script tests                                                                             |
-| `pnpm codegen:daml` | Regenerate Daml JS codegen from built DAR                                                         |
-| `pnpm codegen:api`  | Regenerate OpenAPI types (requires a reachable ledger on :7575)                                   |
-| `pnpm generate`     | Full clean rebuild: DAR + codegen + install                                                       |
-
-From root:
-
-| Script       | Description                            |
-| ------------ | -------------------------------------- |
-| `pnpm check` | Typecheck + lint + knip + format check |
-| `pnpm fix`   | Auto-fix lint + format                 |
+| Script      | Description                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------- |
+| `pnpm test` | Run the test/ Vitest suite; the DevNet e2e runs only when configured + `MPC_CANTON_LIVE_MUTATE=1` |

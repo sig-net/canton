@@ -2,6 +2,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bootstrap": "pnpm run daml:build && pnpm run codegen:daml && pnpm install --config.confirm-modules-purge=false",
+    "daml:build": "dpm build --all",
+    "daml:test": "for pkg in daml-packages/*/; do (cd \"$pkg\" && dpm test) || exit 1; done",
+    "codegen:daml": "dpm codegen-js daml-packages/daml-signer/.daml/dist/daml-signer-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js && dpm codegen-js daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js",
+    "codegen:api": "curl -sf http://localhost:7575/docs/openapi -o test/openapi.yaml && pnpm exec openapi-typescript test/openapi.yaml -o ts-packages/canton-sig/generated/api/ledger-api.ts",
+    "codegen": "pnpm run codegen:daml && pnpm run codegen:api",
+    "clean": "rm -rf ts-packages/canton-sig/generated daml-packages/*/.daml",
+    "generate": "pnpm run clean && pnpm run daml:build && pnpm run codegen && pnpm install --config.confirm-modules-purge=false",
     "check": "pnpm -r run check:types && eslint . && knip && prettier --check .",
     "fix": "eslint . --fix && prettier --write ."
   },
@@ -12,6 +20,7 @@
     "eslint-config-prettier": "^10.1.8",
     "jiti": "^2.6.1",
     "knip": "^5.85.0",
+    "openapi-typescript": "^7.13.0",
     "prettier": "^3.8.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"

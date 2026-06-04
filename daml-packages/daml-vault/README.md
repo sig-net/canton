@@ -22,11 +22,17 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 ## Choices
 
+Both `RequestDeposit` and `RequestWithdrawal` also take the four CC signature-fee args
+(`feeConfigCid`, `transferFactoryCid`, `inputHoldingCids`, `transferContext`) and forward them to
+`Signer.SignBidirectional` → `Execute`, which charges the fee atomically. The requester sources them
+client-side (see `canton-sig`'s fee helpers) and attaches the matching disclosures; if the fee can't
+settle, `Execute` aborts and nothing is created. See [daml-signer § CC signature fee](../daml-signer/README.md#cc-signature-fee).
+
 `Vault.RequestDeposit` (controller `requester`):
 
 1. Validates `evmTxParams.calldata` is exactly `transfer(address,uint256)` (selector `a9059cbb`, two ABI slots, recipient = `evmVaultAddress`, no trailing bytes), and `evmTxParams.to = Some <token>`.
 2. Builds `path = "${vaultId},${requester},${userPath}"` so the deposit address is namespaced per vault and per user.
-3. In one tx: creates `SignRequest` → exercises `Signer.SignBidirectional` (which runs `Execute` to emit `SignBidirectionalEvent`) → creates `PendingDeposit` carrying `requestId` and `signEventCid`.
+3. In one tx: creates `SignRequest` → exercises `Signer.SignBidirectional` (which runs `Execute` to charge the CC fee and emit `SignBidirectionalEvent`) → creates `PendingDeposit` carrying `requestId` and `signEventCid`.
 
 `Vault.ClaimDeposit` (controller `requester`):
 

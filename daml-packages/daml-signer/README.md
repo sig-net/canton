@@ -36,6 +36,11 @@ The Signer enforces operator-set isolation, not replay protection — calldata v
 data-dependencies:
   - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
   - ../daml-eip712/.daml/dist/daml-eip712-0.0.1.dar # transitive — required at compile time
+  # SignBidirectional/Execute take token-standard fee args (see "CC signature fee"),
+  # so a consumer that threads them needs the vendored interface DARs too:
+  - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
+  - ../vendor/splice-api-token-holding-v1-1.0.0.dar
+  - ../vendor/splice-api-token-transfer-instruction-v1-1.0.0.dar
   # add daml-abi if you need the calldata-decoding helpers used by daml-vault:
   # - ../daml-abi/.daml/dist/daml-abi-0.0.1.dar
 build-options:
@@ -53,9 +58,13 @@ import Signer
   , requestIdFromSignEvent, signatureDer, validSignature
   , Signature(..), EcdsaSigData(..)
   )
+import SignerFee (SignerFeeConfig)
 import EvmTypes (EvmType2TransactionParams(..), EvmAccessListEntry(..))
 import TxParams (TxParams(..))
 import RequestId (computeRequestId, computeResponseHash)
+import Splice.Api.Token.HoldingV1 (Holding)
+import Splice.Api.Token.MetadataV1 (ChoiceContext)
+import Splice.Api.Token.TransferInstructionV1 (TransferFactory)
 ```
 
 You'll be given two things to integrate against.
@@ -93,6 +102,12 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
     signerCid    : ContractId Signer
     evmTxParams  : EvmType2TransactionParams
     userPath     : Text
+    -- CC signature-fee inputs, threaded straight through to SignBidirectional.
+    -- Sourced client-side as disclosed contracts; see "CC signature fee" below.
+    feeConfigCid       : ContractId SignerFeeConfig
+    transferFactoryCid : ContractId TransferFactory
+    inputHoldingCids   : [ContractId Holding]
+    transferContext    : ChoiceContext
   controller requester
   do
     -- 1a. Domain-level authorization. The Signer signs whatever bytes you hand it,
@@ -115,10 +130,12 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
       outputDeserializationSchema = "[{\"name\":\"\",\"type\":\"bool\"}]"
       respondSerializationSchema  = "[{\"name\":\"\",\"type\":\"bool\"}]"
 
-    -- 1c. Hand off to the disclosed Signer. This consumes the SignRequest via Execute
-    -- and creates the MPC-visible SignBidirectionalEvent in the same transaction.
+    -- 1c. Hand off to the disclosed Signer. This consumes the SignRequest via Execute,
+    -- charges the CC signature fee, and creates the MPC-visible SignBidirectionalEvent —
+    -- all in the same transaction. Execute aborts (no event) unless the fee settles.
     signEventCid <- exercise signerCid SignBidirectional with
       signRequestCid = signReqCid; requester
+      feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
 
     -- 1d. Recompute the requestId for your anchor — the Daml/TS/Rust impls produce
     -- byte-identical hashes (see "requestId formula" below).
@@ -247,6 +264,34 @@ Replay-protection options (pick what fits your threat model):
 
 For a complete worked consumer, see [`daml-vault/daml/Erc20Vault.daml`](../daml-vault/daml/Erc20Vault.daml).
 
+## CC signature fee
+
+Every `Execute` — i.e. every `SignBidirectionalEvent` the MPC acts on — charges the requester a
+Canton Coin fee, paid requester → `feeReceiver` **atomically inside the same transaction**. If the
+fee cannot settle, `Execute` aborts and no event is created (fail-closed). Design:
+[`proposals/cc-signature-fee.md`](../../proposals/cc-signature-fee.md); operations:
+[`proposals/cc-signature-fee-runbook.md`](../../proposals/cc-signature-fee-runbook.md).
+
+- **Fee source.** A separate, mutable, sigNetwork-signed `SignerFeeConfig` holds the current
+  `feeAmount` (re-pegged off-ledger ~every 10 min). `Execute` reads it via the nonconsuming
+  `ReadFeeConfig` choice — not a raw `fetch` — because `Execute` runs under operators+requester
+  authority and a stakeholder-less fetch of the sigNetwork-only config would be unauthorized.
+- **Settlement.** The fee transfer is exercised on a token-standard `TransferFactory` (disclosed) and
+  must settle one-step via the receiver's `TransferPreapproval`. The factory, `AmuletRules`,
+  `OpenMiningRound`, the `SignerFeeConfig`, and the requester's holdings are attached as **disclosed
+  contracts** on the command — visible to the nested exercise.
+- **Anti-forgery preserved.** The requester's spend authority is already present inside `Execute`
+  (it is the transfer `sender` and the choice controller), so **no new authority is introduced**:
+  sigNetwork stays an observer-only non-signatory of `SignRequest` / `SignBidirectionalEvent`. It is
+  merely the payee.
+- **Client support.** `canton-sig` resolves the inputs before submission:
+  `getCurrentFeeDisclosure` (the live fee envelope), `getTransferFactoryForFee` (registry → factory +
+  disclosures), `selectInputHoldings` / `holdingInputsFromEvents` (cover the fee, ≤100 inputs), and
+  `assembleFeeChoiceArgs` / `collectFeeDisclosures` to build the choice args + disclosure list.
+
+`feeReceiver` is a field on `SignerFeeConfig` (= `sigNetwork` today; a dedicated `sigNetworkFA`
+featured-app party later) — the payee can move with no Daml change.
+
 # API Reference
 
 ## Templates
@@ -260,7 +305,7 @@ Singleton identity contract; disclosed off-chain.
 
 | Choice                 | Type         | Controller   | Args                                                                                                                               | Returns                                |
 | ---------------------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `SignBidirectional`    | nonconsuming | `requester`  | `signRequestCid : ContractId SignRequest`, `requester : Party`                                                                     | `ContractId SignBidirectionalEvent`    |
+| `SignBidirectional`    | nonconsuming | `requester`  | `signRequestCid : ContractId SignRequest`, `requester : Party`, + the four fee args (`feeConfigCid`, `transferFactoryCid`, `inputHoldingCids`, `transferContext`) forwarded to `Execute` | `ContractId SignBidirectionalEvent`    |
 | `Respond`              | nonconsuming | `sigNetwork` | `signEventCid : ContractId SignBidirectionalEvent`, `requestId : BytesHex`, `signature : Signature`                                | `ContractId SignatureRespondedEvent`   |
 | `RespondBidirectional` | nonconsuming | `sigNetwork` | `signEventCid : ContractId SignBidirectionalEvent`, `requestId : BytesHex`, `serializedOutput : BytesHex`, `signature : Signature` | `ContractId RespondBidirectionalEvent` |
 
@@ -289,11 +334,37 @@ Fields:
 | `outputDeserializationSchema` | `Text`     | JSON ABI fragment, e.g. `[{"name":"","type":"bool"}]`. Tells the MPC how to ABI-encode the simulated return value into `serializedOutput`.          |
 | `respondSerializationSchema`  | `Text`     | Schema describing how the response is signed. Same value as `outputDeserializationSchema` in current usage.                                         |
 
-| Choice    | Type      | Controller  | Returns                             |
-| --------- | --------- | ----------- | ----------------------------------- |
-| `Execute` | consuming | `requester` | `ContractId SignBidirectionalEvent` |
+| Choice    | Type      | Controller  | Args                                                                                                           | Returns                             |
+| --------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| `Execute` | consuming | `requester` | `feeConfigCid : ContractId SignerFeeConfig`, `transferFactoryCid : ContractId TransferFactory`, `inputHoldingCids : [ContractId Holding]`, `transferContext : ChoiceContext` | `ContractId SignBidirectionalEvent` |
 
-`Execute` derives `sender = computeOperatorsHash (map partyToText operators)` from the on-ledger signatory list and creates the event.
+`Execute` charges the CC signature fee, then derives `sender = computeOperatorsHash (map partyToText operators)` from the on-ledger signatory list and creates the event. The fee transfer (requester → `feeReceiver`) is exercised on the disclosed `TransferFactory` and must settle one-step via the receiver's `TransferPreapproval`; if it does not, `Execute` aborts and no event is created (**fail-closed**). See [CC signature fee](#cc-signature-fee).
+
+### `SignerFeeConfig`
+
+The current CC signature fee. Mutable and sigNetwork-signed, kept separate from the immutable `Signer` so it can be repriced (~every 10 min) without churning the singleton. No token-standard build dependency — it holds the instrument as plain `(admin, id)` fields, and `Execute` builds the `InstrumentId` from them.
+
+- Signatory: `sigNetwork` (so a requester cannot forge a cheaper config)
+- Observer: `feeReceiver`
+- Ensure: `feeAmount >= 0.0 && validUntil > validFrom`
+
+| Field             | Type      | Notes                                                                          |
+| ----------------- | --------- | ------------------------------------------------------------------------------ |
+| `sigNetwork`      | `Party`   | Identity binding — which `Signer` this fee applies to. `Execute` asserts it matches the request's `sigNetwork`. |
+| `feeReceiver`     | `Party`   | Payee + preapproval provider + featured-app party (`sigNetwork` today, `sigNetworkFA` later). |
+| `instrumentAdmin` | `Party`   | Amulet/DSO admin party of the CC `InstrumentId`.                               |
+| `instrumentId`    | `Text`    | CC instrument id (`"Amulet"`).                                                  |
+| `feeAmount`       | `Decimal` | Current CC fee; re-pegged off-ledger.                                          |
+| `validFrom`       | `Time`    | Window start (pre-publish next config with overlap).                           |
+| `validUntil`      | `Time`    | Window end; `Execute` rejects an expired config (anti-replay).                 |
+| `version`         | `Int`     | Monotonic; audit/observability.                                                |
+
+| Choice          | Type         | Controller   | Args                                                          | Returns                          |
+| --------------- | ------------ | ------------ | ------------------------------------------------------------ | -------------------------------- |
+| `UpdateFee`     | consuming    | `sigNetwork` | `newAmount : Decimal`, `newValidFrom : Time`, `newValidUntil : Time` | `ContractId SignerFeeConfig` |
+| `ReadFeeConfig` | nonconsuming | `reader : Party` | `reader : Party`                                         | `SignerFeeConfig`                |
+
+`ReadFeeConfig` is the authority-free read `Execute` uses (a raw `fetch` of this sigNetwork-only contract would be unauthorized under operators+requester authority). `UpdateFee` reprices by archive + recreate, rotating the contract id — which is why clients fetch the current disclosure at submit time rather than hardcoding a cid.
 
 ### `SignBidirectionalEvent`
 

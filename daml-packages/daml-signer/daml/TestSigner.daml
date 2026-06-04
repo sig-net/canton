@@ -9,6 +9,13 @@ import RequestId (computeOperatorsHash)
 import TxParams (TxParams(..))
 import TestFixtures (sampleAccessListParams, sampleContractCreationParams, sampleEthTransferParams, sampleEvmType2Params, erc20BoolSchema)
 
+import DA.Time (time)
+import DA.Date (date, Month(..))
+import SignerFee (SignerFeeConfig(..))
+import TestToken (MockTransferFactory(..))
+import Splice.Api.Token.MetadataV1 (emptyChoiceContext)
+import Splice.Api.Token.TransferInstructionV1 (TransferFactory)
+
 ------------------------------------------------------------------------
 -- Helpers
 ------------------------------------------------------------------------
@@ -44,12 +51,49 @@ mkSignRequest operator requester sigNetwork =
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
 
+-- Create the fee inputs Execute needs: a sigNetwork-signed SignerFeeConfig (valid for
+-- any test-ledger time) and a MockTransferFactory. settleOneStep toggles Completed vs
+-- fail-closed. Holdings are unneeded ([]): the mock factory does not consume inputs.
+mkFeeInfra : Party -> Bool -> Script (ContractId SignerFeeConfig, ContractId MockTransferFactory)
+mkFeeInfra sigNetwork settleOneStep = do
+  feeCfg <- submit sigNetwork do
+    createCmd SignerFeeConfig with
+      sigNetwork
+      feeReceiver = sigNetwork
+      instrumentAdmin = sigNetwork
+      instrumentId = "Amulet"
+      feeAmount = 1.0
+      validFrom = time (date 1970 Jan 1) 0 0 0
+      validUntil = time (date 2099 Dec 31) 0 0 0
+      version = 0
+  factory <- submit sigNetwork do
+    createCmd MockTransferFactory with admin = sigNetwork; settleOneStep
+  pure (feeCfg, factory)
+
+-- Explicit disclosures for the sigNetwork-only Signer + fee config + factory, exactly
+-- as a requester is handed them in production (the Signer envelope + the fee-disclosure
+-- endpoint). Without these, Execute's nested fetch/exercise of sigNetwork-only contracts
+-- is unauthorized (the requester is not a stakeholder).
+feeDisclosures
+  :  Party -> ContractId Signer -> ContractId SignerFeeConfig -> ContractId MockTransferFactory
+  -> Script [Disclosure]
+feeDisclosures owner signerCid feeConfigCid factoryCid = do
+  dSigner <- fromSome <$> queryDisclosure owner signerCid
+  dFee <- fromSome <$> queryDisclosure owner feeConfigCid
+  dFactory <- fromSome <$> queryDisclosure owner factoryCid
+  pure [dSigner, dFee, dFactory]
+
 mkSignEvent : Party -> Party -> Party -> ContractId Signer -> Script (ContractId SignBidirectionalEvent, Text)
 mkSignEvent operator requester sigNetwork signerCid = do
   signReqCid <- mkSignRequest operator requester sigNetwork
-  signEventCid <- submit (actAs requester <> readAs operator <> readAs sigNetwork) do
+  (feeConfigCid, factoryCid) <- mkFeeInfra sigNetwork True
+  ds <- feeDisclosures sigNetwork signerCid feeConfigCid factoryCid
+  signEventCid <- submit (actAs requester <> discloseMany ds) do
     exerciseCmd signerCid SignBidirectional with
       signRequestCid = signReqCid; requester
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
   Some signEvent <- queryContractId requester signEventCid
   pure (signEventCid, requestIdFromSignEvent signEvent)
 
@@ -241,10 +285,15 @@ testSignBidirectionalHappyPath : Script ()
 testSignBidirectionalHappyPath = do
   (sigNetwork, operator, requester, signerCid) <- setup
   signReqCid <- mkSignRequest operator requester sigNetwork
+  (feeConfigCid, factoryCid) <- mkFeeInfra sigNetwork True
+  ds <- feeDisclosures sigNetwork signerCid feeConfigCid factoryCid
 
-  evtCid <- submit (actAs requester <> readAs operator <> readAs sigNetwork) do
+  evtCid <- submit (actAs requester <> discloseMany ds) do
     exerciseCmd signerCid SignBidirectional with
       signRequestCid = signReqCid; requester
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
 
   evt <- queryContractId requester evtCid
   let e = fromSome evt
@@ -270,10 +319,15 @@ testSignBidirectionalWrongRequesterFails = do
   (sigNetwork, operator, requester, signerCid) <- setup
   rogue <- allocateParty "Rogue"
   signReqCid <- mkSignRequest operator requester sigNetwork
+  (feeConfigCid, factoryCid) <- mkFeeInfra sigNetwork True
+  ds <- feeDisclosures sigNetwork signerCid feeConfigCid factoryCid
 
-  submitMustFail (actAs rogue <> readAs operator <> readAs sigNetwork) do
+  submitMustFail (actAs rogue <> discloseMany ds) do
     exerciseCmd signerCid SignBidirectional with
       signRequestCid = signReqCid; requester = rogue
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
 
 ------------------------------------------------------------------------
 -- SignRequest ensure clauses
@@ -494,15 +548,20 @@ testSenderIsOperatorsHash = do
   reqA <- mkReq [op1]
   reqB <- mkReq [op1, op2]
 
-  let readOps ops =
-        readAs sigNetwork <> foldr (<>) mempty (map readAs ops)
-
-  evtA <- submit (actAs requester <> readOps [op1]) do
+  (feeConfigCid, factoryCid) <- mkFeeInfra sigNetwork True
+  ds <- feeDisclosures sigNetwork signerCid feeConfigCid factoryCid
+  evtA <- submit (actAs requester <> discloseMany ds) do
     exerciseCmd signerCid SignBidirectional with
       signRequestCid = reqA; requester
-  evtB <- submit (actAs requester <> readOps [op1, op2]) do
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
+  evtB <- submit (actAs requester <> discloseMany ds) do
     exerciseCmd signerCid SignBidirectional with
       signRequestCid = reqB; requester
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
 
   Some a <- queryContractId requester evtA
   Some b <- queryContractId requester evtB
@@ -529,3 +588,107 @@ testSignBidirectionalEventRejectsSpoofedSender = do
       params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+
+------------------------------------------------------------------------
+-- CC signature fee (SignerFeeConfig + Execute charge)
+------------------------------------------------------------------------
+
+-- Execute charges the fee and creates the event when the transfer settles one-step.
+testExecuteChargesFee : Script ()
+testExecuteChargesFee = do
+  (sigNetwork, operator, requester, signerCid) <- setup
+  signReqCid <- mkSignRequest operator requester sigNetwork
+  (feeConfigCid, factoryCid) <- mkFeeInfra sigNetwork True
+  ds <- feeDisclosures sigNetwork signerCid feeConfigCid factoryCid
+
+  evtCid <- submit (actAs requester <> discloseMany ds) do
+    exerciseCmd signerCid SignBidirectional with
+      signRequestCid = signReqCid; requester
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
+
+  Some _ <- queryContractId requester evtCid
+  pure ()
+
+-- Fail-closed: when the transfer cannot settle one-step (no preapproval → Failed),
+-- Execute aborts and no SignBidirectionalEvent is created.
+testExecuteFailsClosedWithoutPreapproval : Script ()
+testExecuteFailsClosedWithoutPreapproval = do
+  (sigNetwork, operator, requester, signerCid) <- setup
+  signReqCid <- mkSignRequest operator requester sigNetwork
+  (feeConfigCid, factoryCid) <- mkFeeInfra sigNetwork False
+  ds <- feeDisclosures sigNetwork signerCid feeConfigCid factoryCid
+
+  submitMustFail (actAs requester <> discloseMany ds) do
+    exerciseCmd signerCid SignBidirectional with
+      signRequestCid = signReqCid; requester
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
+
+-- A fee config signed by a different sigNetwork is rejected (validateFeeConfig binding).
+testExecuteRejectsForeignFeeConfig : Script ()
+testExecuteRejectsForeignFeeConfig = do
+  (sigNetwork, operator, requester, signerCid) <- setup
+  other <- allocateParty "OtherSigNetwork"
+  signReqCid <- mkSignRequest operator requester sigNetwork
+  (feeConfigCid, factoryCid) <- mkFeeInfra other True
+  dSigner <- fromSome <$> queryDisclosure sigNetwork signerCid
+  dFee <- fromSome <$> queryDisclosure other feeConfigCid
+  dFactory <- fromSome <$> queryDisclosure other factoryCid
+
+  submitMustFail (actAs requester <> discloseMany [dSigner, dFee, dFactory]) do
+    exerciseCmd signerCid SignBidirectional with
+      signRequestCid = signReqCid; requester
+      feeConfigCid
+      transferFactoryCid = toInterfaceContractId @TransferFactory factoryCid
+      inputHoldingCids = []; transferContext = emptyChoiceContext
+
+------------------------------------------------------------------------
+-- Anti-forgery regression
+------------------------------------------------------------------------
+
+-- Adding the CC fee must not make sigNetwork a signatory of the request path
+-- (proposals/cc-signature-fee.md §1 invariant + §12). sigNetwork stays an
+-- observer, so it cannot unilaterally create a SignRequest or a
+-- SignBidirectionalEvent — only operators + requester can. The positive control
+-- isolates "missing signatory authority" as the reason sigNetwork fails, rather
+-- than any ensure/validation incidental to the payload.
+testAntiForgerySigNetworkCannotForgeRequestPath : Script ()
+testAntiForgerySigNetworkCannotForgeRequestPath = do
+  (sigNetwork, operator, requester, _signerCid) <- setup
+  let validSender = computeOperatorsHash [partyToText operator]
+
+  -- sigNetwork alone cannot create the SignRequest (it is an observer, not a signatory)
+  submitMustFail sigNetwork do
+    createCmd SignRequest with
+      operators = [operator]; requester; sigNetwork
+      txParams = EvmType2TxParams sampleEvmType2Params
+      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
+      algo = "ECDSA"; dest = "ethereum"; params = ""
+      outputDeserializationSchema = erc20BoolSchema
+      respondSerializationSchema = erc20BoolSchema
+
+  -- ...nor the SignBidirectionalEvent, even with a correct operatorsHash sender
+  submitMustFail sigNetwork do
+    createCmd SignBidirectionalEvent with
+      operators = [operator]; requester; sigNetwork; sender = validSender
+      txParams = EvmType2TxParams sampleEvmType2Params
+      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
+      algo = "ECDSA"; dest = "ethereum"; params = ""
+      outputDeserializationSchema = erc20BoolSchema
+      respondSerializationSchema = erc20BoolSchema
+
+  -- positive control: the identical event IS creatable with operators + requester
+  -- authority, and sigNetwork can then read it — i.e. it is an observer, not a signatory.
+  evtCid <- submit (actAs operator <> actAs requester) do
+    createCmd SignBidirectionalEvent with
+      operators = [operator]; requester; sigNetwork; sender = validSender
+      txParams = EvmType2TxParams sampleEvmType2Params
+      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
+      algo = "ECDSA"; dest = "ethereum"; params = ""
+      outputDeserializationSchema = erc20BoolSchema
+      respondSerializationSchema = erc20BoolSchema
+  Some evt <- queryContractId sigNetwork evtCid  -- visible to sigNetwork ⇒ observer
+  assertMsg "sigNetwork is the event's observer" (evt.sigNetwork == sigNetwork)

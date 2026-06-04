@@ -31,6 +31,35 @@ export {
   KEY_VERSION,
 } from "./address-derivation.js";
 
+// CC signature fee
+export {
+  selectInputHoldings,
+  holdingInputsFromEvents,
+  parseFeeConfig,
+  isFeeConfigInWindow,
+  getCurrentFeeDisclosure,
+  getTransferFactoryForFee,
+  assembleFeeChoiceArgs,
+  collectFeeDisclosures,
+  CC_DECIMALS,
+  MAX_TRANSFER_INPUTS,
+  TRANSFER_FACTORY_REGISTRY_PATH,
+  HOLDING_INTERFACE_ID,
+  EMPTY_TRANSFER_CONTEXT,
+} from "./fee.js";
+export type {
+  HoldingInput,
+  HoldingSelection,
+  FeeLedgerReader,
+  CurrentFeeDisclosure,
+  FeeTransferDetails,
+  ResolvedTransferFactory,
+  TransferChoiceContext,
+  FeeChoiceArgs,
+} from "./fee.js";
+export { computeFeeCc } from "./fee-pricing.js";
+export type { FeePricingInputs, FeePricingResult } from "./fee-pricing.js";
+
 // EVM transaction building
 export {
   buildTxRequest,
