@@ -22,6 +22,10 @@ import Signer (Signer, SignRequest(..), SignBidirectionalEvent(..),
                SignBidirectional(..),
                Consume_SignatureResponded(..), Consume_RespondBidirectional(..),
                requestIdFromSignEvent, signatureDer)
+import SignerFee (SignerFeeConfig)
+import Splice.Api.Token.HoldingV1 (Holding)
+import Splice.Api.Token.MetadataV1 (ChoiceContext)
+import Splice.Api.Token.TransferInstructionV1 (TransferFactory)
 
 sameOperatorSet : [Party] -> [Party] -> Bool
 sameOperatorSet lhs rhs = sort lhs == sort rhs
@@ -181,6 +185,14 @@ template Vault
         params       : Text
         outputDeserializationSchema : Text
         respondSerializationSchema  : Text
+        -- CC signature fee inputs (proposals/cc-signature-fee.md §5): the requester
+        -- pays sigNetwork's CC fee atomically inside Execute. Sourced client-side as
+        -- disclosed contracts (fee-disclosure endpoint + token registry); Execute
+        -- fail-closes unless the transfer settles one-step.
+        feeConfigCid       : ContractId SignerFeeConfig
+        transferFactoryCid : ContractId TransferFactory
+        inputHoldingCids   : [ContractId Holding]
+        transferContext    : ChoiceContext
       controller requester
       do
         assertMsg "Only ERC20 transfer allowed"
@@ -216,6 +228,7 @@ template Vault
 
         signEventCid <- exercise signerCid SignBidirectional with
           signRequestCid = signReqCid; requester
+          feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
 
         signEvent <- fetch signEventCid
         let requestId = requestIdFromSignEvent signEvent
@@ -280,6 +293,14 @@ template Vault
         params           : Text
         outputDeserializationSchema : Text
         respondSerializationSchema  : Text
+        -- CC signature fee inputs (proposals/cc-signature-fee.md §5): the requester
+        -- pays sigNetwork's CC fee atomically inside Execute. Sourced client-side as
+        -- disclosed contracts (fee-disclosure endpoint + token registry); Execute
+        -- fail-closes unless the transfer settles one-step.
+        feeConfigCid       : ContractId SignerFeeConfig
+        transferFactoryCid : ContractId TransferFactory
+        inputHoldingCids   : [ContractId Holding]
+        transferContext    : ChoiceContext
       controller requester
       do
         assertMsg "recipientAddress must be a canonical ABI address slot"
@@ -324,6 +345,7 @@ template Vault
 
         signEventCid <- exercise signerCid SignBidirectional with
           signRequestCid = signReqCid; requester
+          feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
 
         signEvent <- fetch signEventCid
         let requestId = requestIdFromSignEvent signEvent

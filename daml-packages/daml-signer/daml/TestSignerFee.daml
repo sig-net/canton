@@ -1,0 +1,69 @@
+module TestSignerFee where
+
+import Daml.Script
+import DA.Assert ((===))
+import DA.Time (time)
+import DA.Date (date, Month(..))
+
+import SignerFee (SignerFeeConfig(..), UpdateFee(..), validateFeeConfig)
+
+-- A valid config for `sn`, in-window for all of 2026.
+mkCfg : Party -> SignerFeeConfig
+mkCfg sn = SignerFeeConfig with
+  sigNetwork = sn
+  feeReceiver = sn
+  instrumentAdmin = sn
+  instrumentId = "Amulet"
+  feeAmount = 1.0
+  validFrom = time (date 2026 Jan 1) 0 0 0
+  validUntil = time (date 2026 Dec 31) 0 0 0
+  version = 0
+
+mid2026 : Time
+mid2026 = time (date 2026 Jun 1) 0 0 0
+
+test_validate_ok : Script ()
+test_validate_ok = do
+  sn <- allocateParty "sn"
+  validateFeeConfig sn mid2026 (mkCfg sn) === Right ()
+
+test_validate_wrong_signer : Script ()
+test_validate_wrong_signer = do
+  sn <- allocateParty "sn"
+  other <- allocateParty "other"
+  validateFeeConfig other mid2026 (mkCfg sn) === Left "Fee config belongs to a different sigNetwork"
+
+test_validate_not_yet_valid : Script ()
+test_validate_not_yet_valid = do
+  sn <- allocateParty "sn"
+  let early = time (date 2025 Dec 31) 0 0 0
+  validateFeeConfig sn early (mkCfg sn) === Left "Fee config not yet valid"
+
+test_validate_expired : Script ()
+test_validate_expired = do
+  sn <- allocateParty "sn"
+  let late = time (date 2027 Jan 1) 0 0 0
+  validateFeeConfig sn late (mkCfg sn) === Left "Fee config expired"
+
+test_create_and_reprice : Script ()
+test_create_and_reprice = do
+  sn <- allocateParty "sn"
+  cid <- submit sn do createCmd (mkCfg sn)
+  let vf = time (date 2026 Jun 1) 0 0 0
+      vu = time (date 2026 Jun 3) 0 0 0
+  cid2 <- submit sn do
+    exerciseCmd cid UpdateFee with
+      newAmount = 2.0
+      newValidFrom = vf
+      newValidUntil = vu
+  Some c <- queryContractId sn cid2
+  c.feeAmount === 2.0
+  c.version === 1
+  c.validUntil === vu
+
+-- A requester (non-signatory) cannot create the sigNetwork-signed config.
+test_requester_cannot_forge : Script ()
+test_requester_cannot_forge = do
+  sn <- allocateParty "sn"
+  requester <- allocateParty "requester"
+  submitMustFail requester do createCmd (mkCfg sn)

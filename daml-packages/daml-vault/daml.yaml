@@ -10,5 +10,8 @@ data-dependencies:
   - ../daml-abi/.daml/dist/daml-abi-0.0.1.dar
   - ../daml-eip712/.daml/dist/daml-eip712-0.0.1.dar
   - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
+  - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
+  - ../vendor/splice-api-token-holding-v1-1.0.0.dar
+  - ../vendor/splice-api-token-transfer-instruction-v1-1.0.0.dar
 build-options:
   - -Wno-crypto-text-is-alpha

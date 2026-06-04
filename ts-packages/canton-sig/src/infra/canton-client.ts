@@ -477,18 +477,27 @@ export class CantonClient {
     templateId: string,
     includeCreatedEventBlob: boolean,
   ): Promise<ActiveContractEntry[]> {
+    return this.queryActiveContracts(parties, {
+      TemplateFilter: { value: { templateId, includeCreatedEventBlob } },
+    });
+  }
+
+  /**
+   * Shared `POST /v2/state/active-contracts` query for an arbitrary identifier
+   * filter (template or interface), snapshotting at the current ledger end.
+   */
+  private async queryActiveContracts(
+    parties: string[],
+    identifierFilter: components["schemas"]["CumulativeFilter"]["identifierFilter"],
+  ): Promise<ActiveContractEntry[]> {
     const ledgerEnd = await this.getLedgerEnd();
 
     const partyFilter: components["schemas"]["Filters"] = {
-      cumulative: [
-        {
-          identifierFilter: { TemplateFilter: { value: { templateId, includeCreatedEventBlob } } },
-        },
-      ],
+      cumulative: [{ identifierFilter }],
     };
 
     const data = unwrap(
-      "fetchActiveContracts",
+      "queryActiveContracts",
       await this.client.POST("/v2/state/active-contracts", {
         body: {
           activeAtOffset: ledgerEnd,
@@ -510,6 +519,31 @@ export class CantonClient {
           ]
         : [],
     );
+  }
+
+  /**
+   * Query active contracts that implement an interface, including the computed
+   * interface view, via `POST /v2/state/active-contracts`.
+   *
+   * Returns each matching {@link CreatedEvent} with its `interfaceViews[].viewValue`
+   * populated — the uniform way to read token-standard `Holding` amounts across
+   * concrete templates (e.g. Amulet) without knowing their fields.
+   *
+   * @param parties - Parties whose visible contracts should be included.
+   * @param interfaceId - Fully-qualified interface identifier (package-name ref),
+   *   e.g. `"#splice-api-token-holding-v1:Splice.Api.Token.HoldingV1:Holding"`.
+   * @param includeCreatedEventBlob - Include `createdEventBlob` for later disclosure (default `false`).
+   * @returns Matching active contracts with their interface views.
+   */
+  async getInterfaceContracts(
+    parties: string[],
+    interfaceId: string,
+    includeCreatedEventBlob = false,
+  ): Promise<CreatedEvent[]> {
+    const entries = await this.queryActiveContracts(parties, {
+      InterfaceFilter: { value: { interfaceId, includeInterfaceView: true, includeCreatedEventBlob } },
+    });
+    return entries.map((e) => e.createdEvent);
   }
 
   /**

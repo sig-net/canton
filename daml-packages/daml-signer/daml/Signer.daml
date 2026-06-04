@@ -3,9 +3,19 @@ module Signer where
 import DA.List (unique)
 import DA.Crypto.Text (BytesHex, SignatureHex)
 
+import DA.Time (hours, addRelTime)
+
 import EvmTypes (isBytesN, isCanonicalHex)
 import TxParams (TxParams, validTxParams)
 import RequestId (computeOperatorsHash, computeRequestId)
+import SignerFee (SignerFeeConfig, ReadFeeConfig(..), validateFeeConfig)
+
+import Splice.Api.Token.HoldingV1 (Holding, InstrumentId(..))
+import Splice.Api.Token.MetadataV1 (ExtraArgs(..), ChoiceContext, emptyMetadata)
+import Splice.Api.Token.TransferInstructionV1
+  ( TransferFactory, TransferFactory_Transfer(..), Transfer(..)
+  , TransferInstructionResult_Output(..)
+  )
 
 -- ---------------------------------------------------------------------------
 -- Signature types
@@ -54,11 +64,16 @@ template Signer
     -- authority bridge: delegates to SignRequest.Execute for operators+requester authority
     nonconsuming choice SignBidirectional : ContractId SignBidirectionalEvent
       with
-        signRequestCid : ContractId SignRequest
-        requester      : Party
+        signRequestCid     : ContractId SignRequest
+        requester          : Party
+        feeConfigCid       : ContractId SignerFeeConfig
+        transferFactoryCid : ContractId TransferFactory
+        inputHoldingCids   : [ContractId Holding]
+        transferContext    : ChoiceContext
       controller requester
       do
-        exercise signRequestCid Execute
+        exercise signRequestCid Execute with
+          feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
 
     nonconsuming choice Respond : ContractId SignatureRespondedEvent
       with
@@ -128,8 +143,43 @@ template SignRequest
     -- body authority = operators (signatory) + requester (controller) — exactly SignBidirectionalEvent's signatories
     -- predecessorId (`sender`) is derived from on-ledger operators here so it cannot be Vault-supplied
     choice Execute : ContractId SignBidirectionalEvent
+      with
+        feeConfigCid       : ContractId SignerFeeConfig
+        transferFactoryCid : ContractId TransferFactory
+        inputHoldingCids   : [ContractId Holding]
+        transferContext    : ChoiceContext
       controller requester
       do
+        -- Charge the CC fee first: requester → feeReceiver, settled one-step via the
+        -- receiver's TransferPreapproval. Abort (and so block the event) unless the
+        -- transfer completes in one step. See proposals/cc-signature-fee.md §5.
+        now <- getTime
+        -- read via a nonconsuming choice (not `fetch`): Execute has only
+        -- operators+requester authority, and a stakeholder-less fetch of the
+        -- sigNetwork-signed config would be unauthorized. See ReadFeeConfig.
+        feeConfig <- exercise feeConfigCid ReadFeeConfig with reader = requester
+        case validateFeeConfig sigNetwork now feeConfig of
+          Left err -> abort err
+          Right () -> pure ()
+
+        result <- exercise transferFactoryCid TransferFactory_Transfer with
+          expectedAdmin = feeConfig.instrumentAdmin
+          transfer = Transfer with
+            sender = requester
+            receiver = feeConfig.feeReceiver
+            amount = feeConfig.feeAmount
+            instrumentId = InstrumentId with admin = feeConfig.instrumentAdmin; id = feeConfig.instrumentId
+            requestedAt = now
+            executeBefore = addRelTime now (hours 1)
+            inputHoldingCids
+            meta = emptyMetadata
+          extraArgs = ExtraArgs with context = transferContext; meta = emptyMetadata
+        case result.output of
+          TransferInstructionResult_Completed _ -> pure ()
+          TransferInstructionResult_Pending _ ->
+            abort "Fee transfer did not settle one-step; receiver TransferPreapproval required"
+          TransferInstructionResult_Failed -> abort "Fee transfer failed"
+
         let sender = computeOperatorsHash (map partyToText operators)
         create SignBidirectionalEvent with
           operators; requester; sigNetwork; sender

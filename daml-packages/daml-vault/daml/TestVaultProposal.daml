@@ -6,6 +6,8 @@ import Daml.Script
 
 import Signer
 import Erc20Vault
+import TestVault (mkVaultFeeInfra)
+import Splice.Api.Token.MetadataV1 (emptyChoiceContext)
 import TestFixtures (testPubKeyHex, sampleVaultAddress, sampleEvmType2Params, erc20BoolSchema)
 
 dirtyVaultAddress : BytesHex
@@ -281,6 +283,7 @@ testProposalToDepositLifecycle = do
   assertMsg "sigNetwork" (v.sigNetwork == sigNetwork)
 
   -- Step 4: RequestDeposit through the proposal-created vault
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   (signEventCid, pendingCid) <- submit (actAs requester <> readAs op1 <> readAs op2 <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestDeposit with
       requester; signerCid; path = partyToText requester
@@ -288,6 +291,7 @@ testProposalToDepositLifecycle = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
   -- Verify deposit artifacts
   pending <- queryContractId requester pendingCid

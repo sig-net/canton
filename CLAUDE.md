@@ -35,7 +35,7 @@ For a local loop (an MPC node against a local sandbox), see `TEST_LOCALLY.md` (R
 
 ### Regenerating bindings
 
-`cd test && pnpm codegen:daml` after Daml changes. `pnpm codegen:api` needs a reachable Canton JSON API on `:7575` (e.g. the local sandbox from `TEST_LOCALLY.md`, or DevNet).
+`pnpm codegen:daml` (from the repo root) after Daml changes. `pnpm codegen:api` needs a reachable Canton JSON API on `:7575` (e.g. the local sandbox from `TEST_LOCALLY.md`, or DevNet).
 
 ## Project layout
 

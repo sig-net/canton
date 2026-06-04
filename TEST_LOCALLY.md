@@ -72,5 +72,5 @@ cp <this-repo>/daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar \
 While the Rust harness has its sandbox up on `:7575`, you can regenerate the OpenAPI types here against it:
 
 ```bash
-cd test && pnpm codegen:api
+pnpm codegen:api
 ```

@@ -1,6 +1,6 @@
 # CC Signature Fee — Design Spec
 
-**Status:** Draft for review · **Date:** 2026-06-04 · **Branch:** `feat/cc-deposit-charge`
+**Status:** Design agreed (pricing model finalized) · **Date:** 2026-06-04 · **Branch:** `feat/cc-deposit-charge`
 
 Charge the requester a Canton Coin (CC) fee, atomically, every time they request a signature —
 i.e. every time `SignRequest.Execute` mints the `SignBidirectionalEvent` that sigNetwork observes
@@ -32,7 +32,7 @@ Builds on the two prior research docs in this folder:
 | #   | Decision                                                                                                                                                                                                                            | Note                                                                                                                                         |
 | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | **Approach A — enforced-atomic, on-ledger nested transfer.** The CC transfer is exercised _inside_ `Execute`, not composed client-side.                                                                                             | Client-composed (sibling root command) is atomic but **not enforced** — a requester could submit `Execute` alone and skip the fee. Rejected. |
-| 2   | **Fee lives in a separate mutable template** `SignerFeeConfig`, updated daily by off-ledger automation to track current Canton economics — _not_ a fixed field on the immutable `Signer`.                                           | Per requirement: "input a template with the fee so we can mutate it over time, daily according with the current canton fee."                 |
+| 2   | **Fee lives in a separate mutable template** `SignerFeeConfig`, re-pegged off-ledger ~every 10 min (≈ one OpenMiningRound cycle) to track current Canton economics — _not_ a fixed field on the immutable `Signer`.                                           | Original ask was "daily"; refined to ~10 min (one OpenMiningRound cycle) — see §6.3 — so the coverage buffer stays small and intraday CC moves can't break cost coverage.                 |
 | 3   | **Non-refundable.** If the MPC never responds or the EVM tx later fails, the fee is not returned.                                                                                                                                   | Per requirement ("3. good"). Rationale in §7.                                                                                                |
 | 4   | **Receiver is parameterized.** Today fee receiver = preapproval provider = featured-app party = `sigNetwork`. A `feeReceiver` field lets this become a dedicated featured-app party (`sigNetworkFA`) later with **no Daml change**. | Per requirement: "it won't be sigNetwork in the future it will be the FeatureApp party like sigNetworkFA."                                   |
 | 5   | **Settlement is one-step via the receiver's `TransferPreapproval`.** No second signature from sigNetwork at request time.                                                                                                           | Off-ledger infra in §6.                                                                                                                      |
@@ -71,7 +71,7 @@ template SignerFeeConfig
                                --   = sigNetwork today; = sigNetworkFA in the future (§6)
     instrumentAdmin : Party    -- Amulet/DSO admin party of the CC InstrumentId
     instrumentId    : Text     -- the CC instrument ("Amulet")
-    feeAmount   : Decimal      -- current CC fee; updated daily by automation (§6)
+    feeAmount   : Decimal      -- current CC fee (fee_cc), in CC; re-pegged ~every 10 min by automation (§6)
     version     : Int          -- monotonic; audit/observability
   where
     signatory sigNetwork       -- only sigNetwork can set the fee → a requester cannot forge a cheaper config
@@ -85,7 +85,7 @@ template SignerFeeConfig
 
 **Why a separate template, not a `Signer` field.** `Signer` is the disclosed MPC-identity singleton;
 making the fee a field would force a contract churn / package upgrade to reprice. A standalone config
-lets sigNetwork reprice with a single `UpdateFee` exercise (daily, per §6) without touching `Signer`,
+lets sigNetwork reprice with a single `UpdateFee` exercise (~every 10 min, per §6) without touching `Signer`,
 `SignRequest`, or any vault.
 
 **Binding & anti-forgery.** `Execute` asserts the supplied config belongs to this Signer
@@ -101,8 +101,8 @@ never-archived singleton**: its choices are `nonconsuming`, so its contract id i
 a new one with a **new contract id and new `createdEventBlob`**, so any statically-published envelope
 goes stale on the next reprice. Mutability and a permanent cid are mutually exclusive in Daml.
 
-Repricing therefore needs **no manual daily re-disclosure**. sigNetwork runs one `UpdateFee` exercise
-per day; its service serves whatever the current `SignerFeeConfig` is; the requester fetches that
+Repricing therefore needs **no manual re-disclosure**. sigNetwork runs one `UpdateFee` exercise
+per re-peg interval (~10 min); its service serves whatever the current `SignerFeeConfig` is; the requester fetches that
 current envelope at submit time over the **same handoff channel as the Signer** (a requester can't
 read the sigNetwork-only config from its own ACS), except it returns the _current_ contract instead of
 a fixed one. This is exactly how every Canton app already consumes `OpenMiningRound` (rotates on the
@@ -110,7 +110,7 @@ order of minutes) and `AmuletRules`: the cid is never hardcoded — only the end
 **fetch endpoint** once, not the fee cid.
 
 **In-flight robustness / anti-replay.** Give `SignerFeeConfig` a `validFrom`/`validUntil` window and
-assert `getTime` falls inside it in `Execute`. sigNetwork can publish tomorrow's config ahead of time
+assert `getTime` falls inside it in `Execute`. sigNetwork can publish the next interval's config ahead of time
 with overlapping windows, so there is always a valid config, in-flight submissions don't fail across
 an update, and an expired config can't be replayed even if archived lazily. Without the window, a
 stale-cid submission that races an `UpdateFee` simply hits `CONTRACT_NOT_FOUND` and the client
@@ -206,11 +206,44 @@ Concretely, four standing pieces of off-ledger operation:
 2. **`FeaturedAppRight`** — held by `feeReceiver` so that incoming transfers via its preapproval emit a
    `FeaturedAppActivityMarker` and accrue featured-app rewards (CIP-0104). CC transfer fees are zeroed
    (CIP-0078), so the only real network cost of the charge is **traffic**, which the reward offsets.
-3. **Daily fee automation** — a job that exercises `SignerFeeConfig.UpdateFee` at most once per day,
-   recomputing `feeAmount` from current Canton economics (e.g. target a fixed USD value and divide by
-   the current `amuletPrice` from `OpenMiningRound`, so the CC-denominated fee tracks CC price). This
-   is the "daily according with the current canton fee" requirement; the Daml layer only stores the
-   current number.
+3. **Fee-pricing automation (~10 min) — extends the §2 decisions.** A job recomputes `feeAmount` (the
+   single CC number) **entirely off-chain** and posts it via `SignerFeeConfig.UpdateFee` once per
+   re-peg interval (~10 min, ≈ one `OpenMiningRound` cycle). Only the resulting CC value is posted
+   on-ledger, so `Execute` reads no price and needs **no `splice-amulet` build dependency** — the
+   token-standard interface DARs of §9 suffice. _(Rejected alternative: reading `amuletPrice` on-ledger
+   inside `Execute` for exact per-tx pricing would force a `splice-amulet` build dep, since
+   `OpenMiningRound` / `AmuletRules` are not token-standard interfaces. Off-chain pricing keeps deps
+   light; the trade is that a posted number is stale between re-pegs.)_
+
+   **What the fee covers.** sigNetwork is the **submitter** of the two evidence post-backs — `Respond`
+   and `RespondBidirectional` (`Signer.daml:63,83`) — and the submitter pays their traffic
+   ("submitter pays", `canton-transaction-flow.md` §5). The fee reimburses that, plus margin:
+
+   ```text
+   bytes    = measured billable bytes of (Respond + RespondBidirectional)   # Scan CIP-0104 traffic API or MemberTraffic delta — measured, never hand-calc
+   cost_usd = bytes / 1e6 * extraTrafficPrice            # gross cost; ignore the free base-rate burst (safe upper bound)
+   fee_cc   = (cost_usd / amuletPrice) * (1 + coverage + profit)
+   #                                          ^buffer    ^0.10
+   ```
+
+   `extraTrafficPrice` (USD/MB) and `amuletPrice` (USD↔CC) are read off-chain from Scan / the current
+   `OpenMiningRound`.
+
+   - **Gross basis (rewards = upside).** `cost_usd` is the full traffic cost as if always billable.
+     Below the free burst (~400 KB / 20 min, `canton-transaction-flow.md` §4) the real marginal cost
+     is ≈ 0, so this over-collects at low volume — intentionally, as headroom. sigNetwork _also_ earns
+     featured-app rewards on those same confirmed post-backs; that is treated as **upside, never netted
+     into the fee** (the reward is an unpredictable, dilutable pooled share).
+   - **Markup = two separate terms.** `coverage` (~0.10–0.15, tuned to the worst `amuletPrice` move
+     over one re-peg interval + post-back latency, plus `serializedOutput` byte variance and any MPC
+     retry) is what actually _guarantees_ coverage; `profit` (0.10) is margin on top. Keep them
+     separate — folding both into a single 10% lets a normal CC dip eat the profit and then break
+     coverage.
+   - **Why ~10 min, not daily.** The only fast-moving input is `amuletPrice` (new `OpenMiningRound`
+     ~every 10 min). Re-pegging at that cadence keeps `coverage` small; a daily peg would need a large
+     buffer and still could not guarantee coverage across intraday CC moves. Coverage is therefore
+     **high-probability, not absolute** (the posted number is stale between re-pegs) — cadence and
+     buffer size are the knobs that tighten it.
 4. **Fee-disclosure endpoint** — `SignerFeeConfig` is sigNetwork-only (the requester is not a
    stakeholder, exactly like the `Signer`), so the requester cannot read it from its own ACS.
    sigNetwork serves the current disclosure: an active-contracts query by template, run as sigNetwork
@@ -237,7 +270,13 @@ spec is written with this split in mind — nothing hardcodes the MPC party as t
 
 - **One fee per signature request.** A deposit is one `Execute`; a withdrawal is one `Execute`. Each
   is charged once. (Claim/Complete choices create no new `SignBidirectionalEvent`, so they are free.)
-- **Amount** = `SignerFeeConfig.feeAmount` (CC), read live at `Execute` time.
+- **Amount** = `SignerFeeConfig.feeAmount` (CC) — the single off-chain-computed `fee_cc` from §6.3,
+  read as a flat value at `Execute` time (no on-chain price math). Sized to cover sigNetwork's
+  **gross** traffic cost of the two evidence post-backs (`Respond` + `RespondBidirectional`) + a
+  `coverage` buffer + 10% profit.
+- **It's a price, not a pass-through.** Below the free burst sigNetwork's real post-back cost ≈ 0, and
+  (if featured) it earns rewards on those same contracts — so at low volume the fee is largely margin.
+  Keep it competitive and don't manufacture traffic (featured status is revocable).
 - **Instrument** = Canton Coin (Amulet), per the config's `instrumentId` / `instrumentAdmin`.
 - **Non-refundable.** The charge buys the _request_ (the observed event + the traffic it costs),
   settled atomically at request time. It is **not** an escrow on the downstream EVM outcome. Refunding
@@ -355,8 +394,8 @@ insufficient, and (d) emits the featured-app marker crediting the receiver.
   `SignBidirectionalEvent` after the change.
 - **Mutation test:** delete the `TransferFactory_Transfer` line → the fee-enforcement test must fail.
   Flip the binding assertion (`==` → `/=`) → the forged-config test must fail.
-- **Oracle/golden:** the daily `feeAmount` computation (USD ÷ `amuletPrice`) checked against a
-  reference calc.
+- **Oracle/golden:** the off-chain `fee_cc` computation (§6.3: gross `cost_usd` → ÷ `amuletPrice` →
+  × (1 + `coverage` + 0.10)) checked against a reference calc, including the buffer and profit terms.
 - **Spike + e2e:** §10 spike on CN Quickstart, then full deposit + withdraw with a real CC charge and
   reward attribution.
 
@@ -372,9 +411,13 @@ insufficient, and (d) emits the featured-app marker crediting the receiver.
    attribution for the reward (per `featured-app-rewards.md`) — confirm against the live token-standard
    API on the target Splice version.
 4. Fee-config validity-window length and pre-publish overlap policy (§4) — operational tuning for the
-   daily `UpdateFee` so in-flight requests never straddle a gap. _(The disclosure model itself is
+   ~10-min `UpdateFee` so in-flight requests never straddle a gap. _(The disclosure model itself is
    decided: the client fetches the current envelope from sigNetwork's endpoint, not a hardcoded cid;
    contract keys are ruled out as cross-participant.)_
+5. **Empirical pricing baseline** — measure billable bytes of `Respond` / `RespondBidirectional` (Scan
+   CIP-0104 traffic API or `MemberTraffic` delta on DevNet/TestNet) to fix the `bytes` constant, and
+   size the `coverage` buffer from observed `amuletPrice` volatility over one re-peg interval +
+   post-back latency. Re-measure `bytes` whenever the evidence-contract shapes change.
 
 ---
 

@@ -15,6 +15,12 @@ import Signer
 import Erc20Vault
 import EvmTypes (EvmType2TransactionParams)
 import RequestId (computeOperatorsHash)
+import SignerFee (SignerFeeConfig(..))
+import TestToken (MockTransferFactory(..))
+import Splice.Api.Token.MetadataV1 (emptyChoiceContext)
+import Splice.Api.Token.TransferInstructionV1 (TransferFactory)
+import DA.Time (time)
+import DA.Date (date, Month(..))
 import TestFixtures
   ( testPubKeyHex, claimTestPubKey, claimTestSignature, claimTestRequestId
   , refundTestSignature, boolFalseTestSignature, ecdsaTestSig
@@ -62,6 +68,29 @@ setupWithKey pubKey = do
       vaultId = "test-vault"
 
   pure (sigNetwork, operator, requester, signerCid, vaultCid)
+
+-- Fee infra for the RequestDeposit/RequestWithdrawal charge: a sigNetwork-signed
+-- SignerFeeConfig (valid for any test-ledger time) + a MockTransferFactory that
+-- settles one-step. Both are signed by sigNetwork, so the existing
+-- `readAs sigNetwork` on every Request* submission already makes them visible —
+-- no explicit disclosure needed in these tests. Holdings are unneeded ([]): the
+-- mock factory does not consume inputs. Fail-closed behaviour is covered by the
+-- daml-signer suite; here the charge always succeeds so the lifecycle proceeds.
+mkVaultFeeInfra : Party -> Script (ContractId SignerFeeConfig, ContractId TransferFactory)
+mkVaultFeeInfra sigNetwork = do
+  feeCfg <- submit sigNetwork do
+    createCmd SignerFeeConfig with
+      sigNetwork
+      feeReceiver = sigNetwork
+      instrumentAdmin = sigNetwork
+      instrumentId = "Amulet"
+      feeAmount = 1.0
+      validFrom = time (date 1970 Jan 1) 0 0 0
+      validUntil = time (date 2099 Dec 31) 0 0 0
+      version = 0
+  factory <- submit sigNetwork do
+    createCmd MockTransferFactory with admin = sigNetwork; settleOneStep = True
+  pure (feeCfg, toInterfaceContractId @TransferFactory factory)
 
 mkSignEvent : Party -> Party -> Party -> EvmType2TransactionParams -> Script (ContractId SignBidirectionalEvent)
 mkSignEvent operator requester sigNetwork evmTxParams = do
@@ -113,12 +142,14 @@ testDepositLifecycle = do
   (sigNetwork, operator, requester, signerCid, vaultCid) <- setup
 
   let depositPath = partyToText requester
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   (signEventCid, pendingCid) <- submit (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestDeposit with
       requester; signerCid; path = depositPath; evmTxParams = sampleEvmType2Params
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
   pending <- queryContractId requester pendingCid
   let pd = fromSome pending
@@ -367,12 +398,14 @@ testRespondWrongController : Script ()
 testRespondWrongController = do
   (sigNetwork, operator, requester, signerCid, vaultCid) <- setup
   let depositPath = partyToText requester
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   (signEventCid, pendingCid) <- submit (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestDeposit with
       requester; signerCid; path = depositPath; evmTxParams = sampleEvmType2Params
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
   Some pending <- queryContractId requester pendingCid
 
   -- requester tries to exercise Respond (controller is sigNetwork)
@@ -389,12 +422,14 @@ testWrongFunctionSignature = do
 
   let badParams = sampleEvmType2Params with
         calldata = "095ea7b3" <> DA.Text.drop 8 sampleEvmType2Params.calldata
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestDeposit with
       requester; signerCid; path = "test"; evmTxParams = badParams
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- RequestDeposit rejects transfer to address other than the vault address
 testWrongRecipient : Script ()
@@ -405,12 +440,14 @@ testWrongRecipient = do
         calldata = erc20TransferSelector
             <> "0000000000000000000000001111111111111111111111111111111111111111"
             <> "0000000000000000000000000000000000000000000000000000000005f5e100"
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestDeposit with
       requester; signerCid; path = "test"; evmTxParams = badParams
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- RequestDeposit rejects trailing calldata beyond transfer(address,uint256)'s two ABI slots
 testDepositRejectsTrailingEncodedArgs : Script ()
@@ -418,12 +455,14 @@ testDepositRejectsTrailingEncodedArgs = do
   (sigNetwork, operator, requester, signerCid, vaultCid) <- setup
 
   let badParams = sampleEvmType2Params with calldata = sampleEvmType2Params.calldata <> "00"
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestDeposit with
       requester; signerCid; path = "test"; evmTxParams = badParams
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 ------------------------------------------------------------------------
 -- Withdrawal lifecycle
@@ -439,6 +478,7 @@ testWithdrawalLifecycle = do
       operators = [operator]; owner = requester
       erc20Address = sampleErc20Address; amount = sampleHoldingAmount
 
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   (signEventCid, pendingCid) <- submit (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = sampleWithdrawalEvmParams
@@ -446,6 +486,7 @@ testWithdrawalLifecycle = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
   pending <- queryContractId requester pendingCid
   let pw = fromSome pending
@@ -556,6 +597,7 @@ testWithdrawalRejectsWrongOwner = do
       operators = [operator]; owner = requester
       erc20Address = sampleErc20Address; amount = sampleHoldingAmount
 
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs userB <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester = userB; signerCid; evmTxParams = sampleWithdrawalEvmParams
@@ -563,6 +605,7 @@ testWithdrawalRejectsWrongOwner = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- RequestWithdrawal rejects when evmTxParams.to differs from holding erc20Address
 testWithdrawalRejectsWrongErc20 : Script ()
@@ -575,6 +618,7 @@ testWithdrawalRejectsWrongErc20 = do
       erc20Address = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       amount = sampleHoldingAmount
 
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = sampleWithdrawalEvmParams
@@ -582,6 +626,7 @@ testWithdrawalRejectsWrongErc20 = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- RequestWithdrawal rejects when withdrawal amount differs from holding amount
 testWithdrawalRejectsAmountMismatch : Script ()
@@ -594,6 +639,7 @@ testWithdrawalRejectsAmountMismatch = do
       erc20Address = sampleErc20Address
       amount = "0000000000000000000000000000000000000000000000000000000000000001"
 
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = sampleWithdrawalEvmParams
@@ -601,6 +647,7 @@ testWithdrawalRejectsAmountMismatch = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- RequestWithdrawal rejects when transfer recipient differs from recipientAddress parameter
 testWithdrawalRejectsWrongRecipient : Script ()
@@ -612,6 +659,7 @@ testWithdrawalRejectsWrongRecipient = do
       operators = [operator]; owner = requester
       erc20Address = sampleErc20Address; amount = sampleHoldingAmount
 
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = sampleWithdrawalEvmParams
@@ -620,6 +668,7 @@ testWithdrawalRejectsWrongRecipient = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- RequestWithdrawal rejects recipient address slots whose high 12 bytes are not zero.
 testWithdrawalRejectsDirtyRecipientPadding : Script ()
@@ -633,6 +682,7 @@ testWithdrawalRejectsDirtyRecipientPadding = do
 
   let badParams = sampleWithdrawalEvmParams with
         calldata = erc20TransferSelector <> dirtyRecipientAddress <> sampleHoldingAmount
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = badParams
@@ -641,6 +691,7 @@ testWithdrawalRejectsDirtyRecipientPadding = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- CompleteWithdrawal rejects when requester differs from PendingWithdrawal.requester
 testCompleteWithdrawalRejectsWrongRequester : Script ()
@@ -735,6 +786,7 @@ testWithdrawalRejectsWrongFunctionSignature = do
 
   let badParams = sampleWithdrawalEvmParams with
         calldata = "095ea7b3" <> DA.Text.drop 8 sampleWithdrawalEvmParams.calldata
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = badParams
@@ -742,6 +794,7 @@ testWithdrawalRejectsWrongFunctionSignature = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 -- RequestWithdrawal rejects trailing calldata beyond transfer(address,uint256)'s two ABI slots
 testWithdrawalRejectsTrailingEncodedArgs : Script ()
@@ -755,6 +808,7 @@ testWithdrawalRejectsTrailingEncodedArgs = do
 
   let badParams = sampleWithdrawalEvmParams with
         calldata = sampleWithdrawalEvmParams.calldata <> "00"
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = badParams
@@ -762,6 +816,7 @@ testWithdrawalRejectsTrailingEncodedArgs = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 ------------------------------------------------------------------------
 -- RequestWithdrawal rejects holding with mismatched operators
@@ -778,6 +833,7 @@ testWithdrawalRejectsHoldingOperatorsMismatch = do
       operators = [rogue]; owner = requester
       erc20Address = sampleErc20Address; amount = sampleHoldingAmount
 
+  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
   submitMustFail (actAs requester <> actAs rogue <> readAs operator <> readAs sigNetwork) do
     exerciseCmd vaultCid RequestWithdrawal with
       requester; signerCid; evmTxParams = sampleWithdrawalEvmParams
@@ -785,6 +841,7 @@ testWithdrawalRejectsHoldingOperatorsMismatch = do
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
+      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
 
 ------------------------------------------------------------------------
 -- CompleteWithdrawal rejects requestId mismatch
