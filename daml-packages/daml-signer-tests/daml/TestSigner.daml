@@ -3,23 +3,18 @@ module TestSigner where
 import DA.Optional (fromSome)
 import Daml.Script
 
-import Signer (Signer(..), SignerProposal(..), AcceptSigner(..), RequestSignature(..), Respond(..), RespondBidirectional(..), SignBidirectionalEvent(..), Consume_SignBidirectional(..), Consume_SignatureResponded(..), Consume_RespondBidirectional(..), Signature(..), EcdsaSigData(..), requestIdFromSignEvent)
+import Signer (Signer(..), SignerProposal(..), AcceptSigner(..), RequestSignature(..), Respond(..), RespondBidirectional(..), SignBidirectionalEvent(..), SignatureRespondedEvent, RespondBidirectionalEvent, Consume_SignBidirectional(..), Consume_SignatureResponded(..), Consume_RespondBidirectional(..), requestIdFromSignEvent)
 import EvmTypes (EvmAccessListEntry(..), isBytesN, isCanonicalHex, isEvmUInt256, validEvmType2TransactionParams)
 import RequestId (computeOperatorsHash)
 import TxParams (TxParams(..))
-import TestFixtures (sampleAccessListParams, sampleContractCreationParams, sampleEthTransferParams, sampleEvmType2Params, erc20BoolSchema)
+import TestFixtures (MockFeeCollector(..), noFeeExtras, ecdsaTestSig, sampleAccessListParams, sampleContractCreationParams, sampleEthTransferParams, sampleEvmType2Params, erc20BoolSchema)
 
 import Splice.Api.Token.MetadataV1 (emptyMetadata)
 import Signet.Api.Fee.V1 (FeeCollector, FeeCollectorRegistration(..))
-import TestFeeCollector (MockFeeCollector(..), noFeeExtras)
 
 ------------------------------------------------------------------------
 -- Helpers
 ------------------------------------------------------------------------
-
--- | Create a test ECDSA signature with default recoveryId=0
-testSig : Text -> Signature
-testSig der = EcdsaSig (EcdsaSigData with der; recoveryId = 0)
 
 -- Create the co-signed Signer via the two-party ceremony: sigNetwork proposes,
 -- sigNetworkFA accepts. The resulting Signer carries BOTH signatures, so sigNetworkFA
@@ -81,6 +76,31 @@ feeInfraAndDisclosures sigNetworkFA signerCid = do
   ds <- feeDisclosures sigNetworkFA signerCid collectorCid registrationCid
   pure (registrationCid, ds)
 
+-- Canonical valid RequestSignature args; tests vary operators/requester/
+-- registration positionally and override the field under test via record update.
+mkRequestArgs : [Party] -> Party -> ContractId FeeCollectorRegistration -> RequestSignature
+mkRequestArgs operators requester feeRegistrationCid = RequestSignature with
+  operators; requester
+  txParams = EvmType2TxParams sampleEvmType2Params
+  caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
+  algo = "ECDSA"; dest = "ethereum"; params = ""
+  outputDeserializationSchema = erc20BoolSchema
+  respondSerializationSchema = erc20BoolSchema
+  feeRegistrationCid
+  feeInputs = []; feeExtraArgs = noFeeExtras
+
+-- A well-formed SignBidirectionalEvent payload (sender = operatorsHash) for the
+-- direct-create authority/ensure tests; spoof fields via record update.
+mkEventPayload : Party -> Party -> Party -> Party -> SignBidirectionalEvent
+mkEventPayload operator requester sigNetwork sigNetworkFA = SignBidirectionalEvent with
+  operators = [operator]; requester; sigNetwork; sigNetworkFA
+  sender = computeOperatorsHash [partyToText operator]
+  txParams = EvmType2TxParams sampleEvmType2Params
+  caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
+  algo = "ECDSA"; dest = "ethereum"; params = ""
+  outputDeserializationSchema = erc20BoolSchema
+  respondSerializationSchema = erc20BoolSchema
+
 -- Exercise RequestSignature for a single operator + requester through the standard happy
 -- path (fee settles one-step). operators + requester co-authorize; the Signer supplies
 -- sigNetworkFA ambiently.
@@ -88,21 +108,35 @@ mkSignEvent : Party -> Party -> Party -> ContractId Signer -> Script (ContractId
 mkSignEvent operator requester sigNetworkFA signerCid = do
   (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
   signEventCid <- submit (actAs operator <> actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"
-      keyVersion = 1
-      path = "test-path"
-      algo = "ECDSA"
-      dest = "ethereum"
-      params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [operator] requester feeRegistrationCid)
   Some signEvent <- queryContractId requester signEventCid
   pure (signEventCid, requestIdFromSignEvent signEvent)
+
+-- Canonical Respond / RespondBidirectional payloads (the MPC post-backs); tests
+-- override the field under test via record update.
+mkRespond : ContractId SignBidirectionalEvent -> Text -> Respond
+mkRespond signEventCid requestId = Respond with
+  signEventCid; requestId; signature = ecdsaTestSig "bb"
+
+mkRespondBi : ContractId SignBidirectionalEvent -> Text -> RespondBidirectional
+mkRespondBi signEventCid requestId = RespondBidirectional with
+  signEventCid; requestId; serializedOutput = "cc"; signature = ecdsaTestSig "dd"
+
+-- Full request → respond round; returns (sigNetwork, operator, requester) plus
+-- the evidence event the Consume_* tests retire.
+mkRespondedEvt : Script (Party, Party, Party, ContractId SignatureRespondedEvent)
+mkRespondedEvt = do
+  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
+  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
+  evtCid <- submit sigNetwork do exerciseCmd signerCid (mkRespond signEventCid requestId)
+  pure (sigNetwork, operator, requester, evtCid)
+
+mkRespondBiEvt : Script (Party, Party, Party, ContractId RespondBidirectionalEvent)
+mkRespondBiEvt = do
+  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
+  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
+  evtCid <- submit sigNetwork do exerciseCmd signerCid (mkRespondBi signEventCid requestId)
+  pure (sigNetwork, operator, requester, evtCid)
 
 testHexPredicatesReturnBoolForMalformedInput : Script ()
 testHexPredicatesReturnBoolForMalformedInput = do
@@ -170,11 +204,7 @@ testRespondHappyPath = do
   (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
   (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid Respond with
-      signEventCid
-      requestId
-      signature = testSig "bb"
+  evtCid <- submit sigNetwork do exerciseCmd signerCid (mkRespond signEventCid requestId)
 
   evt <- queryContractId sigNetwork evtCid
   let e = fromSome evt
@@ -184,7 +214,7 @@ testRespondHappyPath = do
   assertMsg "requester"  (e.requester  == requester)
   assertMsg "requestId"  (e.requestId  == requestId)
   assertMsg "responder"  (e.responder  == sigNetwork)
-  assertMsg "signature"  (e.signature  == testSig "bb")
+  assertMsg "signature"  (e.signature  == ecdsaTestSig "bb")
 
 -- requester cannot exercise Respond (controller is sigNetwork)
 testRespondByRequesterFails : Script ()
@@ -192,11 +222,7 @@ testRespondByRequesterFails = do
   (_sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
   (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
-  submitMustFail requester do
-    exerciseCmd signerCid Respond with
-      signEventCid
-      requestId
-      signature = testSig "bb"
+  submitMustFail requester do exerciseCmd signerCid (mkRespond signEventCid requestId)
 
 -- Respond rejects non-canonical signature hex before creating evidence
 testRespondRejectsNonCanonicalSignatureHex : Script ()
@@ -205,10 +231,7 @@ testRespondRejectsNonCanonicalSignatureHex = do
   (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
   submitMustFail sigNetwork do
-    exerciseCmd signerCid Respond with
-      signEventCid
-      requestId
-      signature = testSig "0xbb"
+    exerciseCmd signerCid ((mkRespond signEventCid requestId) with signature = ecdsaTestSig "0xbb")
 
 -- Respond rejects when caller-supplied requestId does not match signEventCid
 testRespondRejectsRequestIdMismatch : Script ()
@@ -217,10 +240,7 @@ testRespondRejectsRequestIdMismatch = do
   (signEventCid, _requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
   submitMustFail sigNetwork do
-    exerciseCmd signerCid Respond with
-      signEventCid
-      requestId = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-      signature = testSig "bb"
+    exerciseCmd signerCid (mkRespond signEventCid "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 
 -- sigNetwork exercises RespondBidirectional; verify all fields including serializedOutput
 testRespondBidirectionalHappyPath : Script ()
@@ -228,12 +248,7 @@ testRespondBidirectionalHappyPath = do
   (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
   (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid RespondBidirectional with
-      signEventCid
-      requestId
-      serializedOutput = "cc"
-      signature = testSig "dd"
+  evtCid <- submit sigNetwork do exerciseCmd signerCid (mkRespondBi signEventCid requestId)
 
   evt <- queryContractId sigNetwork evtCid
   let e = fromSome evt
@@ -244,7 +259,7 @@ testRespondBidirectionalHappyPath = do
   assertMsg "requestId"        (e.requestId         == requestId)
   assertMsg "responder"        (e.responder         == sigNetwork)
   assertMsg "serializedOutput" (e.serializedOutput  == "cc")
-  assertMsg "signature"        (e.signature         == testSig "dd")
+  assertMsg "signature"        (e.signature         == ecdsaTestSig "dd")
 
 -- requester cannot exercise RespondBidirectional (controller is sigNetwork)
 testRespondBidirectionalByRequesterFails : Script ()
@@ -252,12 +267,7 @@ testRespondBidirectionalByRequesterFails = do
   (_sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
   (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
-  submitMustFail requester do
-    exerciseCmd signerCid RespondBidirectional with
-      signEventCid
-      requestId
-      serializedOutput = "cc"
-      signature = testSig "dd"
+  submitMustFail requester do exerciseCmd signerCid (mkRespondBi signEventCid requestId)
 
 -- RespondBidirectional rejects non-canonical output hex before creating evidence
 testRespondBidirectionalRejectsNonCanonicalSerializedOutput : Script ()
@@ -266,11 +276,7 @@ testRespondBidirectionalRejectsNonCanonicalSerializedOutput = do
   (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
   submitMustFail sigNetwork do
-    exerciseCmd signerCid RespondBidirectional with
-      signEventCid
-      requestId
-      serializedOutput = "0xcc"
-      signature = testSig "dd"
+    exerciseCmd signerCid ((mkRespondBi signEventCid requestId) with serializedOutput = "0xcc")
 
 -- RespondBidirectional rejects when caller-supplied requestId does not match signEventCid
 testRespondBidirectionalRejectsRequestIdMismatch : Script ()
@@ -279,11 +285,7 @@ testRespondBidirectionalRejectsRequestIdMismatch = do
   (signEventCid, _requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
 
   submitMustFail sigNetwork do
-    exerciseCmd signerCid RespondBidirectional with
-      signEventCid
-      requestId = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-      serializedOutput = "cc"
-      signature = testSig "dd"
+    exerciseCmd signerCid (mkRespondBi signEventCid "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 
 ------------------------------------------------------------------------
 -- RequestSignature
@@ -291,21 +293,15 @@ testRespondBidirectionalRejectsRequestIdMismatch = do
 
 -- operators + requester exercise RequestSignature -> creates SignBidirectionalEvent,
 -- co-signed by sigNetworkFA (ambient via the Signer), observed by sigNetwork.
+-- Doubles as the fee charge-success positive control (the mock collector settles);
+-- its fail-closed pair is testRequestSignatureFailsClosedWhenChargeAborts.
 testRequestSignatureHappyPath : Script ()
 testRequestSignatureHappyPath = do
   (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
   (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
 
   evtCid <- submit (actAs operator <> actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [operator] requester feeRegistrationCid)
 
   evt <- queryContractId requester evtCid
   let e = fromSome evt
@@ -340,15 +336,7 @@ testRequestSignatureWrongRequesterFails = do
   (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
 
   submitMustFail (actAs rogue <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester = rogue
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [operator] rogue feeRegistrationCid)
 
 ------------------------------------------------------------------------
 -- RequestSignature guard clauses (operators / tx params)
@@ -361,15 +349,7 @@ testRequestSignatureEmptyOperatorsFails = do
   (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
 
   submitMustFail (actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = []; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [] requester feeRegistrationCid)
 
 -- RequestSignature with duplicate operators is rejected (guard: unique operators)
 testRequestSignatureDuplicateOperatorsFails : Script ()
@@ -378,15 +358,7 @@ testRequestSignatureDuplicateOperatorsFails = do
   (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
 
   submitMustFail (actAs operator <> actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator, operator]; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [operator, operator] requester feeRegistrationCid)
 
 -- RequestSignature rejects non-canonical hex in EVM transaction params
 testRequestSignatureRejectsNonCanonicalEvmHex : Script ()
@@ -396,15 +368,8 @@ testRequestSignatureRejectsNonCanonicalEvmHex = do
   (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
 
   submitMustFail (actAs operator <> actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams badParams
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid ((mkRequestArgs [operator] requester feeRegistrationCid)
+      with txParams = EvmType2TxParams badParams)
 
 -- RequestSignature rejects EVM transaction params with the wrong byte shape
 testRequestSignatureRejectsWrongEvmByteLength : Script ()
@@ -414,15 +379,8 @@ testRequestSignatureRejectsWrongEvmByteLength = do
   (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
 
   submitMustFail (actAs operator <> actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams badParams
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid ((mkRequestArgs [operator] requester feeRegistrationCid)
+      with txParams = EvmType2TxParams badParams)
 
 -- SignBidirectionalEvent delegated archival: operators/requester can retire a consumed
 -- sign event via Consume_SignBidirectional (a plain archive would need sigNetworkFA too).
@@ -464,49 +422,22 @@ testConsumeSignBidirectionalByObserverFails = do
 -- operator can archive SignatureRespondedEvent via Consume (actor elem operators)
 testConsumeSignatureRespondedByOperator : Script ()
 testConsumeSignatureRespondedByOperator = do
-  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
-  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
-
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid Respond with
-      signEventCid
-      requestId
-      signature = testSig "bb"
-
+  (_sigNetwork, operator, _requester, evtCid) <- mkRespondedEvt
   submit operator do
     exerciseCmd evtCid Consume_SignatureResponded with actor = operator
-
-  pure ()
 
 -- requester can archive SignatureRespondedEvent via Consume (actor == requester)
 testConsumeSignatureRespondedByRequester : Script ()
 testConsumeSignatureRespondedByRequester = do
-  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
-  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
-
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid Respond with
-      signEventCid
-      requestId
-      signature = testSig "bb"
-
+  (_sigNetwork, _operator, requester, evtCid) <- mkRespondedEvt
   submit requester do
     exerciseCmd evtCid Consume_SignatureResponded with actor = requester
-
-  pure ()
 
 -- rogue party cannot archive SignatureRespondedEvent (has visibility but not authorized)
 testConsumeSignatureRespondedByRogueFails : Script ()
 testConsumeSignatureRespondedByRogueFails = do
-  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
+  (sigNetwork, _operator, _requester, evtCid) <- mkRespondedEvt
   rogue <- allocateParty "Rogue"
-  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
-
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid Respond with
-      signEventCid
-      requestId
-      signature = testSig "bb"
 
   -- rogue has visibility (readAs sigNetwork) but fails on assertMsg authorization
   submitMustFail (actAs rogue <> readAs sigNetwork) do
@@ -517,52 +448,22 @@ testConsumeSignatureRespondedByRogueFails = do
 -- requester can archive RespondBidirectionalEvent via Consume (actor == requester)
 testConsumeRespondBidirectionalByRequester : Script ()
 testConsumeRespondBidirectionalByRequester = do
-  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
-  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
-
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid RespondBidirectional with
-      signEventCid
-      requestId
-      serializedOutput = "cc"
-      signature = testSig "dd"
-
+  (_sigNetwork, _operator, requester, evtCid) <- mkRespondBiEvt
   submit requester do
     exerciseCmd evtCid Consume_RespondBidirectional with actor = requester
-
-  pure ()
 
 -- operator can archive RespondBidirectionalEvent via Consume (actor elem operators)
 testConsumeRespondBidirectionalByOperator : Script ()
 testConsumeRespondBidirectionalByOperator = do
-  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
-  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
-
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid RespondBidirectional with
-      signEventCid
-      requestId
-      serializedOutput = "cc"
-      signature = testSig "dd"
-
+  (_sigNetwork, operator, _requester, evtCid) <- mkRespondBiEvt
   submit operator do
     exerciseCmd evtCid Consume_RespondBidirectional with actor = operator
-
-  pure ()
 
 -- rogue party cannot archive RespondBidirectionalEvent (has visibility but not authorized)
 testConsumeRespondBidirectionalByRogueFails : Script ()
 testConsumeRespondBidirectionalByRogueFails = do
-  (sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
+  (sigNetwork, _operator, _requester, evtCid) <- mkRespondBiEvt
   rogue <- allocateParty "Rogue"
-  (signEventCid, requestId) <- mkSignEvent operator requester sigNetworkFA signerCid
-
-  evtCid <- submit sigNetwork do
-    exerciseCmd signerCid RespondBidirectional with
-      signEventCid
-      requestId
-      serializedOutput = "cc"
-      signature = testSig "dd"
 
   -- rogue has visibility (readAs sigNetwork) but fails on assertMsg authorization
   submitMustFail (actAs rogue <> readAs sigNetwork) do
@@ -588,15 +489,7 @@ testSenderIsOperatorsHash = do
   let mkEvt ops = do
         (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
         submit (foldr (<>) (actAs requester) (map actAs ops) <> discloseMany ds) do
-          exerciseCmd signerCid RequestSignature with
-            operators = ops; requester
-            txParams = EvmType2TxParams sampleEvmType2Params
-            caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-            algo = "ECDSA"; dest = "ethereum"; params = ""
-            outputDeserializationSchema = erc20BoolSchema
-            respondSerializationSchema = erc20BoolSchema
-            feeRegistrationCid
-            feeInputs = []; feeExtraArgs = noFeeExtras
+          exerciseCmd signerCid (mkRequestArgs ops requester feeRegistrationCid)
 
   evtA <- mkEvt [op1]
   evtB <- mkEvt [op1, op2]
@@ -614,45 +507,13 @@ testSignBidirectionalEventRejectsSpoofedSender = do
   -- all signatory authority present (operator + requester + sigNetworkFA), so the ONLY
   -- reason to fail is the ensure binding sender to operatorsHash.
   submitMustFail (actAs operator <> actAs requester <> actAs sigNetworkFA) do
-    createCmd SignBidirectionalEvent with
-      operators = [operator]
-      requester
-      sigNetwork
-      sigNetworkFA
-      sender = "0000000000000000000000000000000000000000000000000000000000000000"
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"
-      keyVersion = 1
-      path = "test-path"
-      algo = "ECDSA"
-      dest = "ethereum"
-      params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
+    createCmd ((mkEventPayload operator requester sigNetwork sigNetworkFA)
+      with sender = "0000000000000000000000000000000000000000000000000000000000000000")
 
 ------------------------------------------------------------------------
 -- CC signature fee (FeeCollectorRegistration + late-bound Charge)
+-- (charge-success positive control: testRequestSignatureHappyPath)
 ------------------------------------------------------------------------
-
--- RequestSignature charges the fee and creates the event when Charge succeeds.
-testRequestSignatureChargesFee : Script ()
-testRequestSignatureChargesFee = do
-  (_sigNetwork, sigNetworkFA, operator, requester, signerCid) <- setup
-  (feeRegistrationCid, ds) <- feeInfraAndDisclosures sigNetworkFA signerCid
-
-  evtCid <- submit (actAs operator <> actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
-
-  Some _ <- queryContractId requester evtCid
-  pure ()
 
 -- Fail-closed: when Charge aborts (e.g. the transfer cannot settle one-step),
 -- RequestSignature aborts and no SignBidirectionalEvent is created.
@@ -663,15 +524,7 @@ testRequestSignatureFailsClosedWhenChargeAborts = do
   ds <- feeDisclosures sigNetworkFA signerCid collectorCid feeRegistrationCid
 
   submitMustFail (actAs operator <> actAs requester <> discloseMany ds) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [operator] requester feeRegistrationCid)
 
 -- A registration signed by a different featured-app party is rejected: the
 -- Signer binds the fee layer to ITS OWN sigNetworkFA.
@@ -685,15 +538,7 @@ testRequestSignatureRejectsForeignFeeRegistration = do
   dRegistration <- fromSome <$> queryDisclosure other feeRegistrationCid
 
   submitMustFail (actAs operator <> actAs requester <> discloseMany [dSigner, dCollector, dRegistration]) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [operator] requester feeRegistrationCid)
 
 -- A requester CAN create a registration it signs itself (sigNetworkFA =
 -- requester) — that one is fetchable inside RequestSignature (the requester is
@@ -714,15 +559,7 @@ testRequestSignatureRejectsSelfSignedFeeRegistration = do
   dSigner <- fromSome <$> queryDisclosure sigNetwork signerCid
 
   submitMustFail (actAs operator <> actAs requester <> discloseMany [dSigner]) do
-    exerciseCmd signerCid RequestSignature with
-      operators = [operator]; requester
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid = rogueRegistration
-      feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd signerCid (mkRequestArgs [operator] requester rogueRegistration)
 
 -- The trust anchor itself cannot be forged: a requester cannot create a
 -- FeeCollectorRegistration naming sigNetworkFA (missing its signature), so a
@@ -771,16 +608,9 @@ testSignerProposalRequiresSigNetworkFA = do
 testSignBidirectionalEventRequiresSigNetworkFA : Script ()
 testSignBidirectionalEventRequiresSigNetworkFA = do
   (sigNetwork, sigNetworkFA, operator, requester, _signerCid) <- setup
-  let validSender = computeOperatorsHash [partyToText operator]
 
   submitMustFail (actAs operator <> actAs requester) do
-    createCmd SignBidirectionalEvent with
-      operators = [operator]; requester; sigNetwork; sigNetworkFA; sender = validSender
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
+    createCmd (mkEventPayload operator requester sigNetwork sigNetworkFA)
 
 ------------------------------------------------------------------------
 -- Anti-forgery regression
@@ -794,38 +624,18 @@ testSignBidirectionalEventRequiresSigNetworkFA = do
 testAntiForgerySigNetworkCannotForgeRequestPath : Script ()
 testAntiForgerySigNetworkCannotForgeRequestPath = do
   (sigNetwork, sigNetworkFA, operator, requester, _signerCid) <- setup
-  let validSender = computeOperatorsHash [partyToText operator]
+  let event = mkEventPayload operator requester sigNetwork sigNetworkFA
 
   -- sigNetwork alone cannot create the SignBidirectionalEvent (it is only an observer)
-  submitMustFail sigNetwork do
-    createCmd SignBidirectionalEvent with
-      operators = [operator]; requester; sigNetwork; sigNetworkFA; sender = validSender
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
+  submitMustFail sigNetwork do createCmd event
 
   -- ...nor can BOTH infra parties together (sigNetwork + sigNetworkFA): still missing
   -- operators + requester. A Signet infra compromise cannot forge requests.
-  submitMustFail (actAs sigNetwork <> actAs sigNetworkFA) do
-    createCmd SignBidirectionalEvent with
-      operators = [operator]; requester; sigNetwork; sigNetworkFA; sender = validSender
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
+  submitMustFail (actAs sigNetwork <> actAs sigNetworkFA) do createCmd event
 
   -- positive control: the identical event IS creatable with operators + requester +
   -- sigNetworkFA authority, and sigNetwork can then read it — i.e. it is an observer.
   evtCid <- submit (actAs operator <> actAs requester <> actAs sigNetworkFA) do
-    createCmd SignBidirectionalEvent with
-      operators = [operator]; requester; sigNetwork; sigNetworkFA; sender = validSender
-      txParams = EvmType2TxParams sampleEvmType2Params
-      caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
+    createCmd event
   Some evt <- queryContractId sigNetwork evtCid  -- visible to sigNetwork ⇒ observer
   assertMsg "sigNetwork is the event's observer" (evt.sigNetwork == sigNetwork)

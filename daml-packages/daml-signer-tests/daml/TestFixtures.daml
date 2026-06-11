@@ -3,6 +3,8 @@ module TestFixtures where
 import DA.Crypto.Text (BytesHex)
 import EvmTypes (EvmAccessListEntry(..), EvmType2TransactionParams(..))
 import Signer (Signature(..), EcdsaSigData(..))
+import Splice.Api.Token.MetadataV1 (ExtraArgs(..), emptyChoiceContext, emptyMetadata)
+import Signet.Api.Fee.V1
 
 -- ---------------------------------------------------------------------------
 -- Shared test keys and signatures
@@ -83,16 +85,12 @@ sampleEvmType2Params = EvmType2TransactionParams with
   accessList = []
 
 sampleEthTransferParams : EvmType2TransactionParams
-sampleEthTransferParams = EvmType2TransactionParams with
-  chainId = "0000000000000000000000000000000000000000000000000000000000aa36a7"
+sampleEthTransferParams = sampleEvmType2Params with
   nonce = "0000000000000000000000000000000000000000000000000000000000000002"
-  maxPriorityFeePerGas = "000000000000000000000000000000000000000000000000000000003b9aca00"
-  maxFeePerGas = "00000000000000000000000000000000000000000000000000000001dcd65000"
   gasLimit = "0000000000000000000000000000000000000000000000000000000000005208"
   to = Some "1111111111111111111111111111111111111111"
   value = "00000000000000000000000000000000000000000000000000038d7ea4c68000"
   calldata = ""
-  accessList = []
 
 sampleAccessListParams : EvmType2TransactionParams
 sampleAccessListParams = sampleEvmType2Params with
@@ -126,15 +124,35 @@ sampleHoldingAmount : BytesHex
 sampleHoldingAmount = "0000000000000000000000000000000000000000000000000000000005f5e100"
 
 sampleWithdrawalEvmParams : EvmType2TransactionParams
-sampleWithdrawalEvmParams = EvmType2TransactionParams with
-  chainId = "0000000000000000000000000000000000000000000000000000000000aa36a7"
-  nonce = "0000000000000000000000000000000000000000000000000000000000000001"
-  maxPriorityFeePerGas = "000000000000000000000000000000000000000000000000000000003b9aca00"
-  maxFeePerGas = "00000000000000000000000000000000000000000000000000000001dcd65000"
-  gasLimit = "000000000000000000000000000000000000000000000000000000000000c350"
-  to = Some sampleErc20Address
-  value = "0000000000000000000000000000000000000000000000000000000000000000"
+sampleWithdrawalEvmParams = sampleEvmType2Params with
+  to = Some sampleErc20Address  -- == sampleEvmType2Params.to; explicit because withdrawals require to == holding.erc20Address
   calldata = erc20TransferSelector
       <> sampleRecipientAddress
       <> sampleHoldingAmount
-  accessList = []
+
+-- ---------------------------------------------------------------------------
+-- Mock fee collector (shared by the daml-signer + daml-vault suites)
+-- ---------------------------------------------------------------------------
+
+-- Test-only FeeCollector implementation: the Signer only needs "a registered
+-- collector whose Charge succeeds or aborts" — the real CC settlement logic is
+-- tested in signet-fee-amulet-tests against CcFeeCollector.
+
+-- | Empty fee extras for tests: MockFeeCollector reads nothing from context.
+noFeeExtras : ExtraArgs
+noFeeExtras = ExtraArgs with context = emptyChoiceContext; meta = emptyMetadata
+
+template MockFeeCollector
+  with
+    sigNetworkFA   : Party
+    chargeSucceeds : Bool     -- False simulates any failed charge (fail-closed path)
+    chargedAmount  : Decimal  -- echoed in the result on success
+  where
+    signatory sigNetworkFA
+
+    interface instance FeeCollector for MockFeeCollector where
+      view = FeeCollectorView with sigNetworkFA; feeReceiver = sigNetworkFA; meta = emptyMetadata
+      feeCollector_chargeImpl _self _arg =
+        if chargeSucceeds
+          then pure FeeCollector_ChargeResult with amountCharged = chargedAmount; meta = emptyMetadata
+          else abort "MockFeeCollector: charge rejected"

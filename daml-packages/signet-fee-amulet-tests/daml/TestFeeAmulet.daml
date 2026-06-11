@@ -1,0 +1,255 @@
+module TestFeeAmulet where
+
+-- Unit tests for Signet.Fee.Amulet: FeePriceConfig validation + reprice, and
+-- the late-bound CcFeeCollector charge — settled against a test-only mock of
+-- the Splice token-standard TransferFactory so all three settlement branches
+-- (Completed vs Pending vs Failed) run deterministically without the live
+-- Amulet runtime.
+
+import DA.Assert ((===))
+import qualified DA.TextMap as TextMap
+import DA.Time (time)
+import DA.Date (date, Month(..))
+import Daml.Script
+
+import Splice.Api.Token.MetadataV1 (AnyValue(..), ChoiceContext(..), ExtraArgs(..), emptyMetadata)
+import Splice.Api.Token.TransferInstructionV1
+  ( TransferFactory
+  , TransferFactoryView (..)
+  , TransferInstructionResult (..)
+  , TransferInstructionResult_Output (..)
+  )
+import Signet.Api.Fee.V1 (FeeCollector, FeeCollector_Charge(..), FeeCollector_ChargeResult)
+import Signet.Fee.Amulet
+
+-- ---------------------------------------------------------------------------
+-- Shared fixtures
+-- ---------------------------------------------------------------------------
+
+mid2026 : Time
+mid2026 = time (date 2026 Jun 1) 0 0 0
+
+-- valid all of 2026; admin/receiver = fa
+mkPriceConfig : Party -> Decimal -> FeePriceConfig
+mkPriceConfig fa amount = FeePriceConfig with
+  sigNetworkFA = fa
+  feeReceiver = fa
+  instrumentAdmin = fa
+  instrumentId = "Amulet"
+  feeAmount = amount
+  validFrom = time (date 2026 Jan 1) 0 0 0
+  validUntil = time (date 2026 Dec 31) 0 0 0
+  version = 0
+  meta = emptyMetadata
+
+-- ---------------------------------------------------------------------------
+-- Mock token-standard TransferFactory
+-- ---------------------------------------------------------------------------
+
+-- SettleCompleted -> Completed (simulates the receiver's TransferPreapproval)
+-- SettlePending   -> Pending   (no preapproval; two-step offer — charge must abort)
+-- SettleFailed    -> Failed    (transfer failure — charge must abort)
+data MockSettleMode = SettleCompleted | SettlePending | SettleFailed
+  deriving (Eq, Show)
+
+template MockTransferFactory
+  with
+    admin : Party
+    settleMode : MockSettleMode
+  where
+    signatory admin
+    interface instance TransferFactory for MockTransferFactory where
+      view = TransferFactoryView with admin; meta = emptyMetadata
+
+      transferFactory_publicFetchImpl _selfCid _arg =
+        pure (TransferFactoryView with admin; meta = emptyMetadata)
+
+      transferFactory_transferImpl selfCid _arg = case settleMode of
+        SettleCompleted ->
+          pure TransferInstructionResult with
+            output = TransferInstructionResult_Completed with receiverHoldingCids = []
+            senderChangeCids = []
+            meta = emptyMetadata
+        SettlePending ->
+          pure TransferInstructionResult with
+            -- the cid is never fetched by a fail-closed caller (it aborts on
+            -- Pending), so a coerced placeholder is fine for tests
+            output = TransferInstructionResult_Pending with transferInstructionCid = coerceContractId selfCid
+            senderChangeCids = []
+            meta = emptyMetadata
+        SettleFailed ->
+          pure TransferInstructionResult with
+            output = TransferInstructionResult_Failed
+            senderChangeCids = []
+            meta = emptyMetadata
+
+-- ---------------------------------------------------------------------------
+-- FeePriceConfig: validatePriceConfig + UpdateFee
+-- ---------------------------------------------------------------------------
+
+test_validate_ok : Script ()
+test_validate_ok = do
+  fa <- allocateParty "fa"
+  validatePriceConfig fa mid2026 (mkPriceConfig fa 1.0) === Right ()
+
+test_validate_wrong_admin : Script ()
+test_validate_wrong_admin = do
+  fa <- allocateParty "fa"
+  other <- allocateParty "other"
+  validatePriceConfig other mid2026 (mkPriceConfig fa 1.0) === Left "Fee price config belongs to a different sigNetworkFA"
+
+test_validate_not_yet_valid : Script ()
+test_validate_not_yet_valid = do
+  fa <- allocateParty "fa"
+  let early = time (date 2025 Dec 31) 0 0 0
+  validatePriceConfig fa early (mkPriceConfig fa 1.0) === Left "Fee price config not yet valid"
+
+test_validate_expired : Script ()
+test_validate_expired = do
+  fa <- allocateParty "fa"
+  let late = time (date 2027 Jan 1) 0 0 0
+  validatePriceConfig fa late (mkPriceConfig fa 1.0) === Left "Fee price config expired"
+
+test_create_and_reprice : Script ()
+test_create_and_reprice = do
+  fa <- allocateParty "fa"
+  cid <- submit fa do createCmd (mkPriceConfig fa 1.0)
+  let vf = time (date 2026 Jun 1) 0 0 0
+      vu = time (date 2026 Jun 3) 0 0 0
+  cid2 <- submit fa do
+    exerciseCmd cid UpdateFee with
+      newAmount = 2.0
+      newFeeReceiver = fa
+      newValidFrom = vf
+      newValidUntil = vu
+  Some c <- queryContractId fa cid2
+  c.feeAmount === 2.0
+  c.feeReceiver === fa
+  c.version === 1
+  c.validUntil === vu
+
+-- UpdateFee re-points the payee: moving the fee revenue to another party
+-- (e.g. a treasury) is one exercise by the fee admin.
+test_reprice_repoints_receiver : Script ()
+test_reprice_repoints_receiver = do
+  fa <- allocateParty "fa"
+  treasury <- allocateParty "treasury"
+  cid <- submit fa do createCmd (mkPriceConfig fa 1.0)
+  cid2 <- submit fa do
+    exerciseCmd cid UpdateFee with
+      newAmount = 1.0
+      newFeeReceiver = treasury
+      newValidFrom = time (date 2026 Jun 1) 0 0 0
+      newValidUntil = time (date 2026 Jun 3) 0 0 0
+  Some c <- queryContractId fa cid2
+  c.feeReceiver === treasury
+  c.version === 1
+
+-- A requester (non-signatory) cannot create the sigNetworkFA-signed config.
+test_requester_cannot_forge : Script ()
+test_requester_cannot_forge = do
+  fa <- allocateParty "fa"
+  requester <- allocateParty "requester"
+  submitMustFail requester do createCmd (mkPriceConfig fa 1.0)
+
+-- The MPC party (sigNetwork) is not the fee admin: it cannot create the
+-- sigNetworkFA-signed config — a compromised MPC cannot touch pricing.
+test_mpc_party_cannot_forge : Script ()
+test_mpc_party_cannot_forge = do
+  fa <- allocateParty "fa"
+  sigNetwork <- allocateParty "sigNetwork"
+  submitMustFail sigNetwork do createCmd (mkPriceConfig fa 1.0)
+
+-- ---------------------------------------------------------------------------
+-- CcFeeCollector: late-bound FeeCollector_Charge
+-- ---------------------------------------------------------------------------
+
+-- charge context carrying the price config + optionally the transfer factory
+mkChargeContext : ContractId FeePriceConfig -> Optional (ContractId MockTransferFactory) -> ChoiceContext
+mkChargeContext priceCfgCid optFactory = ChoiceContext with
+  values = TextMap.fromList
+    ( (priceConfigContextKey, AV_ContractId (coerceContractId priceCfgCid))
+      :: case optFactory of
+           Some f -> [(transferFactoryContextKey, AV_ContractId (coerceContractId f))]
+           None -> []
+    )
+
+mkExtras : ChoiceContext -> ExtraArgs
+mkExtras ctx = ExtraArgs with context = ctx; meta = emptyMetadata
+
+-- The Charge exercise every test submits (no input holdings: the mock factory
+-- settles without consuming any).
+chargeCmd : ContractId CcFeeCollector -> Party -> ExtraArgs -> Commands FeeCollector_ChargeResult
+chargeCmd collectorCid payer extraArgs =
+  exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+    payer; inputs = []; extraArgs
+
+setupCharge : Decimal -> MockSettleMode -> Script (Party, Party, ContractId CcFeeCollector, ContractId FeePriceConfig, ContractId MockTransferFactory)
+setupCharge feeAmount settleMode = do
+  setTime mid2026
+  fa <- allocateParty "fa"
+  payer <- allocateParty "payer"
+  collectorCid <- submit fa do
+    createCmd CcFeeCollector with sigNetworkFA = fa; feeReceiver = fa; meta = emptyMetadata
+  priceCfgCid <- submit fa do createCmd (mkPriceConfig fa feeAmount)
+  factoryCid <- submit fa do
+    createCmd MockTransferFactory with admin = fa; settleMode
+  pure (fa, payer, collectorCid, priceCfgCid, factoryCid)
+
+-- Happy path: the transfer settles one-step, the charge returns the config amount.
+testChargeHappyPath : Script ()
+testChargeHappyPath = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettleCompleted
+  result <- submit (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (mkChargeContext priceCfgCid (Some factoryCid))))
+  result.amountCharged === 1.0
+
+-- Fail-closed: a Pending outcome (no TransferPreapproval) aborts the charge.
+testChargeFailsClosedOnPending : Script ()
+testChargeFailsClosedOnPending = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettlePending
+  submitMustFail (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (mkChargeContext priceCfgCid (Some factoryCid))))
+
+-- Fail-closed: a Failed outcome aborts the charge.
+testChargeFailsClosedOnFailed : Script ()
+testChargeFailsClosedOnFailed = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettleFailed
+  submitMustFail (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (mkChargeContext priceCfgCid (Some factoryCid))))
+
+-- A price config signed by a different fee admin is rejected (validatePriceConfig).
+testChargeRejectsForeignPriceConfig : Script ()
+testChargeRejectsForeignPriceConfig = do
+  (fa, payer, collectorCid, _ownCfg, factoryCid) <- setupCharge 1.0 SettleCompleted
+  other <- allocateParty "otherFA"
+  foreignCfgCid <- submit other do createCmd (mkPriceConfig other 0.5)
+  submitMustFail (actAs payer <> readAs fa <> readAs other) (chargeCmd collectorCid payer (mkExtras (mkChargeContext foreignCfgCid (Some factoryCid))))
+
+-- An expired price config is rejected (the window check runs at charge time).
+testChargeRejectsExpiredPriceConfig : Script ()
+testChargeRejectsExpiredPriceConfig = do
+  (fa, payer, collectorCid, _ownCfg, factoryCid) <- setupCharge 1.0 SettleCompleted
+  let expiredCfg = (mkPriceConfig fa 1.0) with
+        validFrom = time (date 2026 Jan 1) 0 0 0
+        validUntil = time (date 2026 Mar 1) 0 0 0
+  expiredCid <- submit fa do createCmd expiredCfg
+  submitMustFail (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (mkChargeContext expiredCid (Some factoryCid))))
+
+-- Zero-fee waiver: feeAmount == 0.0 skips the transfer entirely — proven by
+-- omitting the factory from the context (a transfer attempt would abort).
+testChargeZeroFeeWaivesTransfer : Script ()
+testChargeZeroFeeWaivesTransfer = do
+  (fa, payer, collectorCid, _oneCcCfg, _factoryCid) <- setupCharge 1.0 SettleCompleted
+  zeroCfgCid <- submit fa do createCmd (mkPriceConfig fa 0.0)
+  result <- submit (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (mkChargeContext zeroCfgCid None)))
+  result.amountCharged === 0.0
+
+-- Missing price-config context key aborts.
+testChargeMissingPriceConfigKeyAborts : Script ()
+testChargeMissingPriceConfigKeyAborts = do
+  (fa, payer, collectorCid, _cfg, _factory) <- setupCharge 1.0 SettleCompleted
+  submitMustFail (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (ChoiceContext with values = TextMap.empty)))
+
+-- Fee due but no transfer factory in the context aborts.
+testChargeMissingFactoryKeyAborts : Script ()
+testChargeMissingFactoryKeyAborts = do
+  (fa, payer, collectorCid, priceCfgCid, _factory) <- setupCharge 1.0 SettleCompleted
+  submitMustFail (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (mkChargeContext priceCfgCid None)))
