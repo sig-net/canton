@@ -6,12 +6,10 @@
 
 ```bash
 dpm build --all
-for pkg in daml-abi daml-uint256 daml-eip712 signet-fee-amulet-tests daml-signer-tests daml-vault-tests; do
-  (cd daml-packages/$pkg && dpm test)
-done
+pnpm run daml:test
 ```
 
-> `dpm test` does not support `--all` — each package must be tested individually.
+> `dpm test` does not support `--all` — the `daml:test` script (package.json, also used by CI) tests each package individually.
 
 ### TypeScript oracle suites (no ledger needed)
 

@@ -46,14 +46,12 @@ jobs:
           "$HOME/.dpm/bin/dpm" install 3.4.11
 
       - name: Build DAR, run Daml tests & generate codegen
+        # daml:test / codegen:daml are the single source for the package lists
+        # (plain dpm commands, so they run fine before pnpm install).
         run: |
           dpm build --all
-          for pkg in daml-abi daml-uint256 daml-eip712 signet-fee-amulet-tests daml-signer-tests daml-vault-tests; do
-            echo "Testing daml-packages/$pkg..."
-            (cd daml-packages/$pkg && dpm test)
-          done
-          dpm codegen-js daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js
-          dpm codegen-js daml-packages/signet-fee-amulet/.daml/dist/signet-fee-amulet-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js
+          pnpm run daml:test
+          pnpm run codegen:daml
 
       - run: pnpm install --frozen-lockfile
 
