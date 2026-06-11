@@ -1,0 +1,63 @@
+-- | Frozen Signet fee API (v1). Name-versioned like the Splice token-standard
+-- APIs: this package is never upgraded in place — a breaking change ships as a
+-- new `signet-api-fee-v2` package alongside it, never as an SCU. It contains no
+-- logic. Every record carries a required `Metadata`, so future additions are
+-- new map keys, never field-shape changes.
+module Signet.Api.Fee.V1 where
+
+import Splice.Api.Token.HoldingV1 (Holding)
+import Splice.Api.Token.MetadataV1 (ExtraArgs, Metadata)
+
+-- | View of a fee collector. `feeReceiver` is display/debug only — the
+-- authoritative payee lives in the implementation's price config at charge time.
+data FeeCollectorView = FeeCollectorView with
+    sigNetworkFA : Party      -- fee admin this collector belongs to
+    feeReceiver  : Party      -- current payee (informational)
+    meta         : Metadata
+  deriving (Eq, Show)
+
+-- | Result of a fee charge.
+data FeeCollector_ChargeResult = FeeCollector_ChargeResult with
+    amountCharged : Decimal
+    meta          : Metadata
+  deriving (Eq, Show)
+
+-- | Late-bound fee charge: `Signer.RequestSignature` exercises this interface,
+-- so the implementing package upgrades (or is replaced) without rebuilding the
+-- Signer, any consumer, or any client — interface exercises resolve the target
+-- template at runtime via package preference.
+interface FeeCollector where
+  viewtype FeeCollectorView
+
+  -- | Implementation hook for the charge. Aborting here aborts the whole
+  -- enclosing transaction (fail-closed: no fee settled -> no sign event).
+  feeCollector_chargeImpl : ContractId FeeCollector -> FeeCollector_Charge -> Update FeeCollector_ChargeResult
+
+  -- | Charge `payer` the current fee. `inputs` follow the token-standard
+  -- holdings idiom (implementations that do not consume holdings take `[]`);
+  -- `extraArgs.context` carries implementation-internal references provided by
+  -- the FA fee endpoint (price config, transfer factory, ...) — opaque to
+  -- callers; `extraArgs.meta` is caller-provided.
+  nonconsuming choice FeeCollector_Charge : FeeCollector_ChargeResult
+    with
+      payer     : Party
+      inputs    : [ContractId Holding]
+      extraArgs : ExtraArgs
+    controller payer
+    do feeCollector_chargeImpl this self arg
+
+-- | Trust anchor: binds "the collector the Signer must use" under the fee
+-- admin's signature. A requester cannot create one, so a hostile FeeCollector
+-- implementation can never be substituted — `RequestSignature` asserts
+-- `registration.sigNetworkFA == signer.sigNetworkFA`. One registration can
+-- serve every Signer sharing this `sigNetworkFA` (cross-Signer reuse is
+-- harmless: fee semantics don't depend on which Signer routed the request).
+-- Signing a registration is the act that blesses an implementation — treat it
+-- like a deploy approval by the FA party.
+template FeeCollectorRegistration
+  with
+    sigNetworkFA : Party
+    collector    : ContractId FeeCollector
+    meta         : Metadata
+  where
+    signatory sigNetworkFA

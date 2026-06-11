@@ -3,19 +3,13 @@ module Signer where
 import DA.List (unique)
 import DA.Crypto.Text (BytesHex, SignatureHex)
 
-import DA.Time (hours, addRelTime)
-
 import EvmTypes (isBytesN, isCanonicalHex)
 import TxParams (TxParams, validTxParams)
 import RequestId (computeOperatorsHash, computeRequestId)
-import SignerFee (SignerFeeConfig, ReadFeeConfig(..), validateFeeConfig)
 
-import Splice.Api.Token.HoldingV1 (Holding, InstrumentId(..))
-import Splice.Api.Token.MetadataV1 (ExtraArgs(..), ChoiceContext, emptyMetadata)
-import Splice.Api.Token.TransferInstructionV1
-  ( TransferFactory, TransferFactory_Transfer(..), Transfer(..)
-  , TransferInstructionResult_Output(..)
-  )
+import Splice.Api.Token.HoldingV1 (Holding)
+import Splice.Api.Token.MetadataV1 (ExtraArgs)
+import Signet.Api.Fee.V1 (FeeCollectorRegistration, FeeCollector_Charge(..))
 
 -- ---------------------------------------------------------------------------
 -- Signature types
@@ -52,28 +46,78 @@ signatureDer : Signature -> SignatureHex
 signatureDer (EcdsaSig d) = d.der
 
 -- ---------------------------------------------------------------------------
--- Signer singleton — MPC infrastructure
+-- Signer singleton — MPC infrastructure + featured-app co-signatory
+-- ---------------------------------------------------------------------------
+--
+-- The Signer is co-signed by the MPC party (`sigNetwork`) and the featured-app
+-- provider party (`sigNetworkFA`). `sigNetworkFA` consents ONCE here, at creation;
+-- thereafter its authority is ambient inside the Signer's choice bodies, so it
+-- becomes a signatory (hence a CIP-0104 confirmer) on every sign/evidence event
+-- WITHOUT having to co-submit any transaction. Keep `sigNetworkFA` an independent
+-- key/participant from `sigNetwork`, or the co-signature only widens MPC authority.
 -- ---------------------------------------------------------------------------
 
 template Signer
   with
-    sigNetwork : Party
+    sigNetwork   : Party
+    sigNetworkFA : Party        -- featured-app provider party (CIP-0104 confirmer)
   where
-    signatory sigNetwork
+    signatory sigNetwork, sigNetworkFA
 
-    -- authority bridge: delegates to SignRequest.Execute for operators+requester authority
-    nonconsuming choice SignBidirectional : ContractId SignBidirectionalEvent
+    -- Build a sign request and charge the CC fee in one atomic step. `operators` and
+    -- `requester` are the controllers (the anti-forgery gate — exactly the event's
+    -- value signatories); `sigNetworkFA` rides along as an ambient co-signatory from
+    -- the co-signed Signer, so a compromised sigNetwork (still observer-only on the
+    -- event) cannot forge a request. Replaces the old SignBidirectional + the
+    -- transient SignRequest.Execute, which are removed.
+    nonconsuming choice RequestSignature : ContractId SignBidirectionalEvent
       with
-        signRequestCid     : ContractId SignRequest
-        requester          : Party
-        feeConfigCid       : ContractId SignerFeeConfig
-        transferFactoryCid : ContractId TransferFactory
-        inputHoldingCids   : [ContractId Holding]
-        transferContext    : ChoiceContext
-      controller requester
+        operators                   : [Party]
+        requester                   : Party
+        txParams                    : TxParams
+        caip2Id                     : Text
+        keyVersion                  : Int
+        path                        : Text   -- consumer namespaces (e.g. prefix with vaultId) when reusing an operator set
+        algo                        : Text
+        dest                        : Text
+        params                      : Text
+        outputDeserializationSchema : Text
+        respondSerializationSchema  : Text
+        -- CC signature-fee inputs, threaded through as command-level disclosed
+        -- contracts (FA fee endpoint + token registry). The late-bound
+        -- FeeCollector_Charge fail-closes the whole request unless the fee
+        -- settles. These three args are designed to never change again:
+        -- everything fee-specific travels opaquely inside feeExtraArgs.
+        feeRegistrationCid          : ContractId FeeCollectorRegistration
+        feeInputs                   : [ContractId Holding]
+        feeExtraArgs                : ExtraArgs
+      controller operators, requester
       do
-        exercise signRequestCid Execute with
-          feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
+        -- body authority = {sigNetwork, sigNetworkFA} ∪ {operators, requester}
+        assertMsg "operators must be non-empty" (not (null operators))
+        assertMsg "operators must be unique" (unique operators)
+        assertMsg "invalid tx params" (validTxParams txParams)
+
+        -- Charge the CC fee first via the registered FeeCollector. The
+        -- FA-signed registration is the trust anchor: a requester cannot forge
+        -- one, so a hostile collector implementation cannot be substituted
+        -- (the view is never trusted). The interface exercise is LATE-BOUND:
+        -- fee-logic upgrades ship in the impl package (signet-fee-amulet) with
+        -- zero rebuilds of this package, consumers, or clients.
+        registration <- fetch feeRegistrationCid   -- plain fetch: sigNetworkFA is ambient via the co-signed Signer
+        assertMsg "Fee registration belongs to a different sigNetworkFA"
+          (registration.sigNetworkFA == sigNetworkFA)
+        _ <- exercise registration.collector FeeCollector_Charge with
+          payer = requester; inputs = feeInputs; extraArgs = feeExtraArgs
+        -- aborts inside Charge propagate: no fee settled -> no event (fail-closed)
+
+        -- predecessorId (`sender`) is derived from the on-ledger operators set (all of
+        -- whom are controllers) so it cannot be consumer-supplied.
+        let sender = computeOperatorsHash (map partyToText operators)
+        create SignBidirectionalEvent with
+          operators; requester; sigNetwork; sigNetworkFA; sender
+          txParams; caip2Id; keyVersion; path; algo; dest; params
+          outputDeserializationSchema; respondSerializationSchema
 
     nonconsuming choice Respond : ContractId SignatureRespondedEvent
       with
@@ -85,10 +129,13 @@ template Signer
         signEvent <- fetch signEventCid
         assertMsg "Sign event belongs to a different sigNetwork"
           (signEvent.sigNetwork == sigNetwork)
+        assertMsg "Sign event belongs to a different sigNetworkFA"
+          (signEvent.sigNetworkFA == sigNetworkFA)
         assertMsg "requestId does not match sign event"
           (requestId == requestIdFromSignEvent signEvent)
         create SignatureRespondedEvent with
           sigNetwork
+          sigNetworkFA
           operators = signEvent.operators
           requester = signEvent.requester
           requestId
@@ -106,10 +153,13 @@ template Signer
         signEvent <- fetch signEventCid
         assertMsg "Sign event belongs to a different sigNetwork"
           (signEvent.sigNetwork == sigNetwork)
+        assertMsg "Sign event belongs to a different sigNetworkFA"
+          (signEvent.sigNetworkFA == sigNetworkFA)
         assertMsg "requestId does not match sign event"
           (requestId == requestIdFromSignEvent signEvent)
         create RespondBidirectionalEvent with
           sigNetwork
+          sigNetworkFA
           operators = signEvent.operators
           requester = signEvent.requester
           requestId
@@ -118,73 +168,21 @@ template Signer
           signature
 
 -- ---------------------------------------------------------------------------
--- SignRequest — transient authority bridge (Vault → Signer CPI)
+-- SignerProposal — two-party ceremony to create the co-signed Signer
 -- ---------------------------------------------------------------------------
 
-template SignRequest
+template SignerProposal
   with
-    operators                  : [Party]
-    requester                  : Party
-    sigNetwork                 : Party
-    txParams                   : TxParams
-    caip2Id                    : Text
-    keyVersion                 : Int
-    path                       : Text   -- Vault is responsible for namespacing (e.g. prefix with vaultId) when same operator set is reused across vaults
-    algo                       : Text
-    dest                       : Text
-    params                     : Text
-    outputDeserializationSchema : Text
-    respondSerializationSchema  : Text
+    sigNetwork   : Party
+    sigNetworkFA : Party
   where
-    signatory operators, requester
-    observer sigNetwork
-    ensure not (null operators) && unique operators && validTxParams txParams
+    signatory sigNetwork
+    observer sigNetworkFA
 
-    -- body authority = operators (signatory) + requester (controller) — exactly SignBidirectionalEvent's signatories
-    -- predecessorId (`sender`) is derived from on-ledger operators here so it cannot be Vault-supplied
-    choice Execute : ContractId SignBidirectionalEvent
-      with
-        feeConfigCid       : ContractId SignerFeeConfig
-        transferFactoryCid : ContractId TransferFactory
-        inputHoldingCids   : [ContractId Holding]
-        transferContext    : ChoiceContext
-      controller requester
-      do
-        -- Charge the CC fee first: requester → feeReceiver, settled one-step via the
-        -- receiver's TransferPreapproval. Abort (and so block the event) unless the
-        -- transfer completes in one step. See proposals/cc-signature-fee.md §5.
-        now <- getTime
-        -- read via a nonconsuming choice (not `fetch`): Execute has only
-        -- operators+requester authority, and a stakeholder-less fetch of the
-        -- sigNetwork-signed config would be unauthorized. See ReadFeeConfig.
-        feeConfig <- exercise feeConfigCid ReadFeeConfig with reader = requester
-        case validateFeeConfig sigNetwork now feeConfig of
-          Left err -> abort err
-          Right () -> pure ()
-
-        result <- exercise transferFactoryCid TransferFactory_Transfer with
-          expectedAdmin = feeConfig.instrumentAdmin
-          transfer = Transfer with
-            sender = requester
-            receiver = feeConfig.feeReceiver
-            amount = feeConfig.feeAmount
-            instrumentId = InstrumentId with admin = feeConfig.instrumentAdmin; id = feeConfig.instrumentId
-            requestedAt = now
-            executeBefore = addRelTime now (hours 1)
-            inputHoldingCids
-            meta = emptyMetadata
-          extraArgs = ExtraArgs with context = transferContext; meta = emptyMetadata
-        case result.output of
-          TransferInstructionResult_Completed _ -> pure ()
-          TransferInstructionResult_Pending _ ->
-            abort "Fee transfer did not settle one-step; receiver TransferPreapproval required"
-          TransferInstructionResult_Failed -> abort "Fee transfer failed"
-
-        let sender = computeOperatorsHash (map partyToText operators)
-        create SignBidirectionalEvent with
-          operators; requester; sigNetwork; sender
-          txParams; caip2Id; keyVersion; path; algo; dest; params
-          outputDeserializationSchema; respondSerializationSchema
+    -- sigNetworkFA consents once; the resulting Signer carries both signatures.
+    choice AcceptSigner : ContractId Signer
+      controller sigNetworkFA
+      do create Signer with sigNetwork; sigNetworkFA
 
 -- ---------------------------------------------------------------------------
 -- SignBidirectionalEvent — what the MPC watches
@@ -195,7 +193,8 @@ template SignBidirectionalEvent
     operators                  : [Party]
     requester                  : Party
     sigNetwork                 : Party
-    sender                     : BytesHex   -- operatorsHash, set by SignRequest.Execute (NOT user-supplied) — feeds KDF + requestId, isolates key namespace per operator set
+    sigNetworkFA               : Party   -- featured-app confirmer (ambient co-signatory via the co-signed Signer)
+    sender                     : BytesHex   -- operatorsHash, set by RequestSignature (NOT user-supplied) — feeds KDF + requestId, isolates key namespace per operator set
     txParams                : TxParams
     caip2Id                    : Text
     keyVersion                 : Int
@@ -206,12 +205,26 @@ template SignBidirectionalEvent
     outputDeserializationSchema : Text
     respondSerializationSchema  : Text
   where
-    -- operators + requester — NOT sigNetwork — so a compromised sigNetwork cannot forge sign requests at the ledger level
-    signatory operators, requester
+    -- operators + requester are the active authorizers (controllers of Signer.RequestSignature).
+    -- sigNetworkFA is an ambient co-signatory from the co-signed Signer. sigNetwork is still NOT
+    -- an authorizer — a compromised sigNetwork cannot forge sign requests at the ledger level.
+    signatory operators, requester, sigNetworkFA
     observer sigNetwork
     ensure not (null operators) && unique operators
       && sender == computeOperatorsHash (map partyToText operators)
       && validTxParams txParams
+
+    -- A consumer (e.g. the Vault) cannot `archive` this event directly: that needs every
+    -- signatory's authority, and sigNetworkFA is not in a consumer's authority set. sigNetworkFA
+    -- pre-consents here so operators/requester can retire a consumed sign event — mirroring the
+    -- Consume_* choices on the evidence events. sigNetwork (observer) cannot, nor can sigNetworkFA.
+    choice Consume_SignBidirectional : ()
+      with actor : Party
+      controller actor
+      do
+        assertMsg "Not authorized"
+          (actor `elem` operators || actor == requester)
+        pure ()
 
 requestIdFromSignEvent : SignBidirectionalEvent -> BytesHex
 requestIdFromSignEvent event =
@@ -231,14 +244,15 @@ requestIdFromSignEvent event =
 
 template SignatureRespondedEvent
   with
-    sigNetwork : Party
-    operators  : [Party]
-    requester     : Party
-    requestId  : BytesHex
-    responder  : Party
-    signature  : Signature
+    sigNetwork   : Party
+    sigNetworkFA : Party
+    operators    : [Party]
+    requester    : Party
+    requestId    : BytesHex
+    responder    : Party
+    signature    : Signature
   where
-    signatory sigNetwork
+    signatory sigNetwork, sigNetworkFA
     observer operators, requester
     ensure isBytesN 32 requestId && validSignature signature
 
@@ -254,14 +268,15 @@ template SignatureRespondedEvent
 template RespondBidirectionalEvent
   with
     sigNetwork       : Party
+    sigNetworkFA     : Party
     operators        : [Party]
-    requester           : Party
+    requester        : Party
     requestId        : BytesHex
     responder        : Party
     serializedOutput : BytesHex
     signature        : Signature
   where
-    signatory sigNetwork
+    signatory sigNetwork, sigNetworkFA
     observer operators, requester
     ensure isBytesN 32 requestId && isCanonicalHex serializedOutput && validSignature signature
 

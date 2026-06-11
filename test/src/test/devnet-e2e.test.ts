@@ -51,7 +51,7 @@ import {
   submitRawTransaction,
   toCantonHex,
   KEY_VERSION,
-  getCurrentFeeDisclosure,
+  getFeeCollectorContext,
   getTransferFactoryForFee,
   selectInputHoldings,
   holdingInputsFromEvents,
@@ -115,6 +115,10 @@ const EnvSchema = z.object({
   MPC_CANTON_LEDGER_API_USER: z.string().min(1),
   // On DevNet a single party is operators + requester + sigNetwork (the MPC's own party).
   MPC_CANTON_PARTY_ID: z.string().min(1),
+  // Fee admin: the featured-app party that signs the fee infra (the
+  // FeeCollectorRegistration, the collector, and the FeePriceConfig). Defaults
+  // to MPC_CANTON_PARTY_ID for the single-party DevNet setup.
+  MPC_CANTON_SIG_NETWORK_FA_PARTY_ID: z.string().min(1).optional(),
   // Signer + Vault. The Signer's full disclosure envelope is injected from
   // config (a requester can't read the sigNetwork-only Signer); the Vault is live.
   MPC_CANTON_SIGNER_CONTRACT_ID: z.string().min(1),
@@ -136,9 +140,9 @@ const EnvSchema = z.object({
     ),
   // CC token-standard registry base URL — resolves the TransferFactory + its
   // disclosures (AmuletRules/OpenMiningRound) for the signature fee. Required:
-  // the new Daml charges the fee on every RequestDeposit/RequestWithdrawal, and
-  // the SignerFeeConfig + receiver preapproval must already be standing
-  // (see proposals/cc-signature-fee-runbook.md).
+  // the Daml charges the fee on every RequestDeposit/RequestWithdrawal, and the
+  // fee registration/collector/price config + receiver preapproval must already
+  // be standing (docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md).
   MPC_CANTON_CC_REGISTRY_URL: z.url(),
   // Sepolia RPC — we fund derived addresses and broadcast the MPC-signed txs here.
   MPC_CANTON_ETH_RPC_URL: z.url(),
@@ -349,37 +353,41 @@ async function signAndBroadcast(
 /**
  * Assemble the CC signature-fee inputs for one RequestDeposit / RequestWithdrawal.
  *
- * On DevNet a single party is requester = sigNetwork = feeReceiver, so the
- * sigNetwork-only `SignerFeeConfig` is readable directly (party is its
+ * On DevNet a single party is requester = sigNetwork = feeReceiver — and, unless
+ * MPC_CANTON_SIG_NETWORK_FA_PARTY_ID says otherwise, also the fee admin — so the
+ * sigNetworkFA-signed fee contracts are readable directly (the reader is their
  * stakeholder) and the fee transfer is a self-transfer settled via the party's
- * own `TransferPreapproval`. Requires the off-ledger fee infra to be standing
- * (SignerFeeConfig posted, preapproval + featured-app right live) and the CC
- * token-standard registry URL — see proposals/cc-signature-fee-runbook.md.
+ * own `TransferPreapproval`. Requires the fee infra to be standing
+ * (CcFeeCollector + FeeCollectorRegistration + FeePriceConfig posted,
+ * preapproval + featured-app right live) and the CC token-standard registry —
+ * see the design spec §10–§11.
  *
- * Returns the four fee choice args (spread into the choice record) and the
- * disclosures to append to the submission (fee config + factory/rules/round).
+ * Returns the three fee choice args (spread into the choice record) and the
+ * disclosures to append to the submission (registration/collector/price config
+ * + factory/rules/round).
  */
 async function prepareFeeInputs(): Promise<{
   args: FeeChoiceArgs;
   disclosures: DisclosedContract[];
 }> {
-  const fee = await getCurrentFeeDisclosure(canton, party);
+  const feeAdmin = env!.MPC_CANTON_SIG_NETWORK_FA_PARTY_ID ?? party;
+  const collector = await getFeeCollectorContext(canton, feeAdmin);
   const holdingEvents = await canton.getInterfaceContracts([party], HOLDING_INTERFACE_ID);
   const selection = selectInputHoldings(
     holdingInputsFromEvents(holdingEvents),
-    fee.config.feeAmount,
+    collector.priceConfig.feeAmount,
   );
   const factory = await getTransferFactoryForFee(env!.MPC_CANTON_CC_REGISTRY_URL, {
     sender: party,
-    feeReceiver: fee.config.feeReceiver,
-    instrumentAdmin: fee.config.instrumentAdmin,
-    instrumentId: fee.config.instrumentId,
-    amount: fee.config.feeAmount,
+    feeReceiver: collector.priceConfig.feeReceiver,
+    instrumentAdmin: collector.priceConfig.instrumentAdmin,
+    instrumentId: collector.priceConfig.instrumentId,
+    amount: collector.priceConfig.feeAmount,
     inputHoldingCids: selection.inputHoldingCids,
   });
   return {
-    args: assembleFeeChoiceArgs(fee, factory, selection),
-    disclosures: collectFeeDisclosures(fee, factory),
+    args: assembleFeeChoiceArgs(collector, factory, selection),
+    disclosures: collectFeeDisclosures(collector, factory),
   };
 }
 
@@ -445,7 +453,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
       const evmTxParams = await buildTransferParams(depositAddress, vaultAddress, DEPOSIT_AMOUNT);
 
       // RequestDeposit (Vault + Signer + fee contracts disclosed) → PendingDeposit
-      // + SignBidirectionalEvent. The fee is charged atomically inside Execute.
+      // + SignBidirectionalEvent. The fee is charged atomically inside Signer.RequestSignature.
       const fee = await prepareFeeInputs();
       const depositResult = await canton.exerciseChoice(
         userId,
@@ -464,7 +472,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
           params: "",
           outputDeserializationSchema: BOOL_SCHEMA,
           respondSerializationSchema: BOOL_SCHEMA,
-          ...fee.args, // feeConfigCid, transferFactoryCid, inputHoldingCids, transferContext
+          ...fee.args, // feeRegistrationCid, feeInputs, feeExtraArgs
         },
         undefined,
         [vaultDisclosure, signerDisclosure, ...fee.disclosures],
@@ -549,7 +557,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
       const evmTxParams = await buildTransferParams(vaultAddress, recipient, DEPOSIT_AMOUNT);
 
       // RequestWithdrawal (Vault + Signer + fee contracts disclosed) →
-      // PendingWithdrawal + SignBidirectionalEvent. Fee charged inside Execute.
+      // PendingWithdrawal + SignBidirectionalEvent. Fee charged inside Signer.RequestSignature.
       const wdlFee = await prepareFeeInputs();
       const wdlResult = await canton.exerciseChoice(
         userId,
@@ -569,7 +577,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
           params: "",
           outputDeserializationSchema: BOOL_SCHEMA,
           respondSerializationSchema: BOOL_SCHEMA,
-          ...wdlFee.args, // feeConfigCid, transferFactoryCid, inputHoldingCids, transferContext
+          ...wdlFee.args, // feeRegistrationCid, feeInputs, feeExtraArgs
         },
         undefined,
         [vaultDisclosure, signerDisclosure, ...wdlFee.disclosures],

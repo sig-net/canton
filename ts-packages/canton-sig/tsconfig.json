@@ -4,5 +4,5 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["src", "generated/api", "test"]
+  "include": ["src", "generated/api", "test", "scripts"]
 }

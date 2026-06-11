@@ -25,7 +25,8 @@
     "prepack": "pnpm run build",
     "release": "pnpm run build && pnpm publish --access public",
     "release:beta": "pnpm run build && pnpm publish --access public --tag beta",
-    "test": "vitest run"
+    "test": "vitest run",
+    "reprice": "pnpm dlx tsx scripts/reprice-fee.ts"
   },
   "peerDependencies": {
     "viem": "^2.0.0"
@@ -40,6 +41,8 @@
   "devDependencies": {
     "@daml.js/daml-signer-0.0.1": "file:./generated/model/daml-signer-0.0.1",
     "@daml.js/daml-vault-poc-0.0.1": "file:./generated/model/daml-vault-poc-0.0.1",
+    "@daml.js/signet-api-fee-v1-1.0.0": "file:./generated/model/signet-api-fee-v1-1.0.0",
+    "@daml.js/signet-fee-amulet-0.0.1": "file:./generated/model/signet-fee-amulet-0.0.1",
     "@types/node": "^25.3.0",
     "viem": "^2.46.3",
     "tsdown": "^0.21.4",

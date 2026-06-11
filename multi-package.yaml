@@ -2,5 +2,10 @@ packages:
   - daml-packages/daml-abi
   - daml-packages/daml-uint256
   - daml-packages/daml-eip712
+  - daml-packages/signet-api-fee-v1
+  - daml-packages/signet-fee-amulet
+  - daml-packages/signet-fee-amulet-tests
   - daml-packages/daml-signer
+  - daml-packages/daml-signer-tests
   - daml-packages/daml-vault
+  - daml-packages/daml-vault-tests

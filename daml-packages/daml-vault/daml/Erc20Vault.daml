@@ -17,15 +17,14 @@ import Abi
   , abiAddressSlotToAddress
   , abiHasExactSlotCount
   )
-import Signer (Signer, SignRequest(..), SignBidirectionalEvent(..),
+import Signer (Signer, RequestSignature(..), SignBidirectionalEvent(..),
                SignatureRespondedEvent(..), RespondBidirectionalEvent(..),
-               SignBidirectional(..),
+               Consume_SignBidirectional(..),
                Consume_SignatureResponded(..), Consume_RespondBidirectional(..),
                requestIdFromSignEvent, signatureDer)
-import SignerFee (SignerFeeConfig)
 import Splice.Api.Token.HoldingV1 (Holding)
-import Splice.Api.Token.MetadataV1 (ChoiceContext)
-import Splice.Api.Token.TransferInstructionV1 (TransferFactory)
+import Splice.Api.Token.MetadataV1 (ExtraArgs)
+import Signet.Api.Fee.V1 (FeeCollectorRegistration)
 
 sameOperatorSet : [Party] -> [Party] -> Bool
 sameOperatorSet lhs rhs = sort lhs == sort rhs
@@ -171,7 +170,9 @@ template Vault
       && isAbiAddressSlot evmVaultAddress
 
     -- Deposit flow
-    -- atomic create+exercise: Vault body (operators + requester) creates SignRequest, requester exercises Signer.SignBidirectional → Execute → SignBidirectionalEvent — all in one tx
+    -- one atomic step: the Vault body holds operators (signatories) + requester (controller),
+    -- exactly the authority Signer.RequestSignature needs — it charges the CC fee and emits the
+    -- SignBidirectionalEvent (co-signed by sigNetworkFA via the Signer) in the same tx.
     nonconsuming choice RequestDeposit
       : (ContractId SignBidirectionalEvent, ContractId PendingDeposit)
       with
@@ -185,14 +186,16 @@ template Vault
         params       : Text
         outputDeserializationSchema : Text
         respondSerializationSchema  : Text
-        -- CC signature fee inputs (proposals/cc-signature-fee.md §5): the requester
-        -- pays sigNetwork's CC fee atomically inside Execute. Sourced client-side as
-        -- disclosed contracts (fee-disclosure endpoint + token registry); Execute
-        -- fail-closes unless the transfer settles one-step.
-        feeConfigCid       : ContractId SignerFeeConfig
-        transferFactoryCid : ContractId TransferFactory
-        inputHoldingCids   : [ContractId Holding]
-        transferContext    : ChoiceContext
+        -- CC signature-fee inputs (docs/superpowers/specs/
+        -- 2026-06-10-signer-fee-architecture-design.md §5.4): the requester pays
+        -- the featured-app fee atomically inside Signer.RequestSignature via the
+        -- registered late-bound FeeCollector. Sourced client-side as disclosed
+        -- contracts (FA fee endpoint + token registry); the charge fail-closes
+        -- the whole request unless it settles. Opaque by design — these three
+        -- args are expected to never change again for fee reasons.
+        feeRegistrationCid : ContractId FeeCollectorRegistration
+        feeInputs          : [ContractId Holding]
+        feeExtraArgs       : ExtraArgs
       controller requester
       do
         assertMsg "Only ERC20 transfer allowed"
@@ -220,15 +223,12 @@ template Vault
         --   let caip2Id = "eip155:" <> chainIdToDecimalText evmTxParams.chainId
         let caip2Id = "eip155:1"
 
-        signReqCid <- create SignRequest with
-          operators; requester; sigNetwork
+        signEventCid <- exercise signerCid RequestSignature with
+          operators; requester
           txParams = EvmType2TxParams evmTxParams; caip2Id; keyVersion
           path = fullPath; algo; dest; params
           outputDeserializationSchema; respondSerializationSchema
-
-        signEventCid <- exercise signerCid SignBidirectional with
-          signRequestCid = signReqCid; requester
-          feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
+          feeRegistrationCid; feeInputs; feeExtraArgs
 
         signEvent <- fetch signEventCid
         let requestId = requestIdFromSignEvent signEvent
@@ -269,7 +269,9 @@ template Vault
 
         exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
         exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
-        archive pending.signEventCid
+        -- retire the consumed sign event via its delegated-archival choice (it is co-signed
+        -- by sigNetworkFA, so a plain `archive` here would lack sigNetworkFA's authority)
+        exercise pending.signEventCid Consume_SignBidirectional with actor = requester
 
         let amount = abiDecodeUint (abiStripSelector (pending.evmTxParams).calldata) 1
         create Erc20Holding with
@@ -293,14 +295,16 @@ template Vault
         params           : Text
         outputDeserializationSchema : Text
         respondSerializationSchema  : Text
-        -- CC signature fee inputs (proposals/cc-signature-fee.md §5): the requester
-        -- pays sigNetwork's CC fee atomically inside Execute. Sourced client-side as
-        -- disclosed contracts (fee-disclosure endpoint + token registry); Execute
-        -- fail-closes unless the transfer settles one-step.
-        feeConfigCid       : ContractId SignerFeeConfig
-        transferFactoryCid : ContractId TransferFactory
-        inputHoldingCids   : [ContractId Holding]
-        transferContext    : ChoiceContext
+        -- CC signature-fee inputs (docs/superpowers/specs/
+        -- 2026-06-10-signer-fee-architecture-design.md §5.4): the requester pays
+        -- the featured-app fee atomically inside Signer.RequestSignature via the
+        -- registered late-bound FeeCollector. Sourced client-side as disclosed
+        -- contracts (FA fee endpoint + token registry); the charge fail-closes
+        -- the whole request unless it settles. Opaque by design — these three
+        -- args are expected to never change again for fee reasons.
+        feeRegistrationCid : ContractId FeeCollectorRegistration
+        feeInputs          : [ContractId Holding]
+        feeExtraArgs       : ExtraArgs
       controller requester
       do
         assertMsg "recipientAddress must be a canonical ABI address slot"
@@ -337,15 +341,12 @@ template Vault
         -- Vault namespaces its key derivation via path so two vaults sharing the same operator set still get distinct EVM keys
         let fullPath = vaultId <> ",root"
 
-        signReqCid <- create SignRequest with
-          operators; requester; sigNetwork
+        signEventCid <- exercise signerCid RequestSignature with
+          operators; requester
           txParams = EvmType2TxParams evmTxParams; caip2Id; keyVersion
           path = fullPath; algo; dest; params
           outputDeserializationSchema; respondSerializationSchema
-
-        signEventCid <- exercise signerCid SignBidirectional with
-          signRequestCid = signReqCid; requester
-          feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
+          feeRegistrationCid; feeInputs; feeExtraArgs
 
         signEvent <- fetch signEventCid
         let requestId = requestIdFromSignEvent signEvent
@@ -383,7 +384,9 @@ template Vault
 
         exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
         exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
-        archive pending.signEventCid
+        -- retire the consumed sign event via its delegated-archival choice (it is co-signed
+        -- by sigNetworkFA, so a plain `archive` here would lack sigNetworkFA's authority)
+        exercise pending.signEventCid Consume_SignBidirectional with actor = requester
 
         let shouldRefund =
               abiHasErrorPrefix outcome.serializedOutput

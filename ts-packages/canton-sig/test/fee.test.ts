@@ -3,52 +3,93 @@ import { describe, it, expect, vi } from "vitest";
 import {
   selectInputHoldings,
   holdingInputsFromEvents,
-  parseFeeConfig,
-  isFeeConfigInWindow,
-  getCurrentFeeDisclosure,
+  parsePriceConfig,
+  isPriceConfigInWindow,
+  getFeeCollectorContext,
   getTransferFactoryForFee,
   assembleFeeChoiceArgs,
   collectFeeDisclosures,
   EMPTY_TRANSFER_CONTEXT,
   TRANSFER_FACTORY_REGISTRY_PATH,
-  type FeeLedgerReader,
+  PRICE_CONFIG_CONTEXT_KEY,
+  TRANSFER_FACTORY_CONTEXT_KEY,
+  FEE_COLLECTOR_ENDPOINT_PATH,
   type HoldingInput,
 } from "canton-sig";
-import type { CreatedEvent, DisclosedContract } from "canton-sig";
+import type {
+  CreatedEvent,
+  DisclosedContract,
+  FeeCollectorContext,
+  ResolvedTransferFactory,
+} from "canton-sig";
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
 
-const SIG = "sigNetwork::abc";
+const FA = "sigNetworkFA::fa";
 const DSO = "dso::abc";
+const NOW = Date.parse("2026-06-10T12:00:00Z");
 
-function feeConfig(over: Record<string, unknown> = {}) {
+/** A FeePriceConfig payload (Daml Decimal/Int/Time fields travel as JSON strings). */
+function priceConfigPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    sigNetwork: SIG,
-    feeReceiver: SIG,
+    sigNetworkFA: FA,
+    feeReceiver: FA,
     instrumentAdmin: DSO,
     instrumentId: "Amulet",
-    feeAmount: "1.0",
-    validFrom: "1970-01-01T00:00:00Z",
-    validUntil: "2099-12-31T00:00:00Z",
+    feeAmount: "1.5",
+    validFrom: "2026-06-10T00:00:00Z",
+    validUntil: "2026-06-11T00:00:00Z",
     version: "0",
-    ...over,
+    meta: { values: {} },
+    ...overrides,
   };
 }
 
-function createdEvent(contractId: string, createArgument: unknown): CreatedEvent {
+function priceConfigEvent(
+  contractId: string,
+  overrides: Record<string, unknown> = {},
+): CreatedEvent {
   return {
     contractId,
-    templateId: "#daml-signer:SignerFee:SignerFeeConfig",
-    createArgument,
+    templateId: "#signet-fee-amulet:Signet.Fee.Amulet:FeePriceConfig",
+    createArgument: priceConfigPayload(overrides),
+  } as CreatedEvent;
+}
+
+function registrationEvent(contractId: string, collector: string): CreatedEvent {
+  return {
+    contractId,
+    templateId: "#signet-api-fee-v1:Signet.Api.Fee.V1:FeeCollectorRegistration",
+    createArgument: { sigNetworkFA: FA, collector, meta: { values: {} } },
+  } as CreatedEvent;
+}
+
+function disclosure(contractId: string): DisclosedContract {
+  return {
+    contractId,
+    templateId: "stub",
     createdEventBlob: `blob-${contractId}`,
-  } as unknown as CreatedEvent;
+    synchronizerId: "sync::1",
+  } as DisclosedContract;
 }
 
 function holding(contractId: string, amount: string, locked = false): HoldingInput {
   return { contractId, amount, locked };
 }
+
+// ---------------------------------------------------------------------------
+// Fee endpoint contract (wire-pinned constants)
+// ---------------------------------------------------------------------------
+
+describe("fee endpoint contract", () => {
+  it("pins the collector endpoint path and context keys", () => {
+    expect(FEE_COLLECTOR_ENDPOINT_PATH).toBe("/fee/v1/collector");
+    expect(PRICE_CONFIG_CONTEXT_KEY).toBe("signet.network/fee/price-config");
+    expect(TRANSFER_FACTORY_CONTEXT_KEY).toBe("signet.network/fee/transfer-factory");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // selectInputHoldings
@@ -84,7 +125,10 @@ describe("selectInputHoldings", () => {
     expect(() => selectInputHoldings([holding("locked", "100.0", true)], "1.0")).toThrow(
       /insufficient/,
     );
-    const r = selectInputHoldings([holding("locked", "100.0", true), holding("free", "1.0")], "1.0");
+    const r = selectInputHoldings(
+      [holding("locked", "100.0", true), holding("free", "1.0")],
+      "1.0",
+    );
     expect(r.inputHoldingCids).toEqual(["free"]);
   });
 
@@ -166,143 +210,109 @@ describe("holdingInputsFromEvents", () => {
 });
 
 // ---------------------------------------------------------------------------
-// parseFeeConfig + isFeeConfigInWindow
+// parsePriceConfig + isPriceConfigInWindow
 // ---------------------------------------------------------------------------
 
-describe("parseFeeConfig", () => {
-  it("decodes a well-formed SignerFeeConfig payload", () => {
-    const cfg = parseFeeConfig(feeConfig({ feeAmount: "2.5", version: "7" }));
-    expect(cfg.sigNetwork).toBe(SIG);
-    expect(cfg.feeAmount).toBe("2.5");
-    expect(cfg.version).toBe("7");
-    expect(cfg.instrumentId).toBe("Amulet");
+describe("parsePriceConfig", () => {
+  it("decodes a well-formed FeePriceConfig payload", () => {
+    const cfg = parsePriceConfig(priceConfigPayload());
+    expect(cfg.feeAmount).toBe("1.5");
+    expect(cfg.sigNetworkFA).toBe(FA);
+    expect(cfg.version).toBe("0");
   });
 
-  it("throws on a malformed payload (missing field)", () => {
-    const bad = feeConfig();
-    delete (bad as Record<string, unknown>).feeAmount;
-    expect(() => parseFeeConfig(bad)).toThrow();
+  it("throws on a malformed payload", () => {
+    expect(() => parsePriceConfig({ nope: true })).toThrow();
   });
 });
 
-describe("isFeeConfigInWindow", () => {
-  const cfg = parseFeeConfig(
-    feeConfig({ validFrom: "2026-01-01T00:00:00Z", validUntil: "2026-01-01T01:00:00Z" }),
-  );
-  const from = Date.parse("2026-01-01T00:00:00Z");
-  const until = Date.parse("2026-01-01T01:00:00Z");
-
-  it("is true strictly inside the window", () => {
-    expect(isFeeConfigInWindow(cfg, from + 1000)).toBe(true);
-  });
-  it("is true on both inclusive boundaries", () => {
-    expect(isFeeConfigInWindow(cfg, from)).toBe(true);
-    expect(isFeeConfigInWindow(cfg, until)).toBe(true);
-  });
-  it("is false before validFrom and after validUntil", () => {
-    expect(isFeeConfigInWindow(cfg, from - 1)).toBe(false);
-    expect(isFeeConfigInWindow(cfg, until + 1)).toBe(false);
+describe("isPriceConfigInWindow", () => {
+  it("is true inside the window and false outside", () => {
+    const cfg = parsePriceConfig(priceConfigPayload());
+    expect(isPriceConfigInWindow(cfg, NOW)).toBe(true);
+    expect(isPriceConfigInWindow(cfg, Date.parse("2026-06-12T00:00:00Z"))).toBe(false);
+    expect(isPriceConfigInWindow(cfg, Date.parse("2026-06-09T00:00:00Z"))).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// getCurrentFeeDisclosure
+// getFeeCollectorContext
 // ---------------------------------------------------------------------------
 
-function stubReader(events: CreatedEvent[]): {
-  reader: FeeLedgerReader;
-  disclosedFor: ReturnType<typeof vi.fn>;
-} {
-  const disclosedFor = vi.fn(
-    async (parties: string[], templateId: string, contractId: string): Promise<DisclosedContract> =>
-      ({
-        templateId,
-        contractId,
-        createdEventBlob: `blob-${contractId}`,
-        synchronizerId: "sync::1",
-      }) as DisclosedContract,
-  );
-  const reader: FeeLedgerReader = {
-    getActiveContracts: async () => events,
-    getDisclosedContract: disclosedFor,
-  };
-  return { reader, disclosedFor };
-}
+describe("getFeeCollectorContext", () => {
+  function mkReader(registrations: CreatedEvent[], priceConfigs: CreatedEvent[]) {
+    return {
+      getActiveContracts: (_parties: string[], templateId: string) =>
+        Promise.resolve(
+          templateId.includes("FeeCollectorRegistration") ? registrations : priceConfigs,
+        ),
+      getDisclosedContract: (_parties: string[], _templateId: string, contractId: string) =>
+        Promise.resolve(disclosure(contractId)),
+    };
+  }
 
-describe("getCurrentFeeDisclosure", () => {
-  const NOW = Date.parse("2026-03-01T00:00:00Z");
-
-  it("selects the in-window config and returns its disclosure", async () => {
-    const events = [
-      createdEvent(
-        "expired",
-        feeConfig({ validFrom: "2020-01-01T00:00:00Z", validUntil: "2020-02-01T00:00:00Z" }),
-      ),
-      createdEvent(
-        "current",
-        feeConfig({ validFrom: "2026-02-01T00:00:00Z", validUntil: "2026-04-01T00:00:00Z" }),
-      ),
-    ];
-    const { reader, disclosedFor } = stubReader(events);
-    const r = await getCurrentFeeDisclosure(reader, SIG, { nowMs: NOW });
-    expect(r.contractId).toBe("current");
-    expect(r.disclosure.createdEventBlob).toBe("blob-current");
-    expect(disclosedFor).toHaveBeenCalledWith([SIG], expect.any(String), "current");
+  it("returns registration, collector, price config and the context key", async () => {
+    const reader = mkReader([registrationEvent("reg::1", "coll::1")], [priceConfigEvent("cfg::1")]);
+    const r = await getFeeCollectorContext(reader, FA, {
+      nowMs: NOW,
+      collectorTemplateId: "#signet-fee-amulet:Signet.Fee.Amulet:CcFeeCollector",
+    });
+    expect(r.registrationCid).toBe("reg::1");
+    expect(r.collectorCid).toBe("coll::1");
+    expect(r.priceConfigCid).toBe("cfg::1");
+    expect(r.priceConfig.feeAmount).toBe("1.5");
+    expect(r.choiceContextData.values[PRICE_CONFIG_CONTEXT_KEY]).toEqual({
+      tag: "AV_ContractId",
+      value: "cfg::1",
+    });
+    expect(r.disclosedContracts.map((d) => d.contractId)).toEqual(["reg::1", "coll::1", "cfg::1"]);
   });
 
-  it("picks the highest version when windows overlap (pre-published next config)", async () => {
-    const events = [
-      createdEvent(
-        "v1",
-        feeConfig({
-          version: "1",
-          validFrom: "2026-02-01T00:00:00Z",
-          validUntil: "2026-04-01T00:00:00Z",
-        }),
-      ),
-      createdEvent(
-        "v2",
-        feeConfig({
-          version: "2",
-          validFrom: "2026-02-15T00:00:00Z",
-          validUntil: "2026-05-01T00:00:00Z",
-        }),
-      ),
-    ];
-    const { reader } = stubReader(events);
-    const r = await getCurrentFeeDisclosure(reader, SIG, { nowMs: NOW });
-    expect(r.contractId).toBe("v2");
-    expect(r.config.version).toBe("2");
-  });
-
-  it("ignores a config belonging to a different sigNetwork", async () => {
-    const events = [
-      createdEvent(
-        "foreign",
-        feeConfig({
-          sigNetwork: "other::xyz",
-          validFrom: "2026-02-01T00:00:00Z",
-          validUntil: "2026-04-01T00:00:00Z",
-        }),
-      ),
-    ];
-    const { reader } = stubReader(events);
-    await expect(getCurrentFeeDisclosure(reader, SIG, { nowMs: NOW })).rejects.toThrow(
-      /no in-window/,
+  it("picks the in-window config with the highest version on overlap", async () => {
+    const reader = mkReader(
+      [registrationEvent("reg::1", "coll::1")],
+      [
+        priceConfigEvent("cfg::old", { version: "3" }),
+        priceConfigEvent("cfg::new", { version: "4" }),
+      ],
     );
+    const r = await getFeeCollectorContext(reader, FA, {
+      nowMs: NOW,
+      collectorTemplateId: "tpl::collector",
+    });
+    expect(r.priceConfigCid).toBe("cfg::new");
   });
 
-  it("throws when no config is in window", async () => {
-    const events = [
-      createdEvent(
-        "expired",
-        feeConfig({ validFrom: "2020-01-01T00:00:00Z", validUntil: "2020-02-01T00:00:00Z" }),
-      ),
-    ];
-    const { reader } = stubReader(events);
-    await expect(getCurrentFeeDisclosure(reader, SIG, { nowMs: NOW })).rejects.toThrow(
-      /no in-window/,
+  it("throws when no registration exists", async () => {
+    const reader = mkReader([], [priceConfigEvent("cfg::1")]);
+    await expect(
+      getFeeCollectorContext(reader, FA, { nowMs: NOW, collectorTemplateId: "tpl::collector" }),
+    ).rejects.toThrow(/no FeeCollectorRegistration/);
+  });
+
+  it("throws on multiple active registrations (ambiguous rotation state)", async () => {
+    const reader = mkReader(
+      [registrationEvent("reg::1", "coll::1"), registrationEvent("reg::2", "coll::2")],
+      [priceConfigEvent("cfg::1")],
     );
+    await expect(
+      getFeeCollectorContext(reader, FA, { nowMs: NOW, collectorTemplateId: "tpl::collector" }),
+    ).rejects.toThrow(/multiple active FeeCollectorRegistration/);
+  });
+
+  it("throws when no in-window price config exists", async () => {
+    const reader = mkReader(
+      [registrationEvent("reg::1", "coll::1")],
+      [
+        priceConfigEvent("cfg::stale", {
+          validFrom: "2026-06-10T00:00:00Z",
+          validUntil: "2026-06-10T01:00:00Z",
+        }),
+      ],
+    );
+    await expect(
+      getFeeCollectorContext(reader, FA, { nowMs: NOW, collectorTemplateId: "tpl::collector" }),
+    ).rejects.toThrow(/no in-window FeePriceConfig/);
   });
 });
 
@@ -313,7 +323,7 @@ describe("getCurrentFeeDisclosure", () => {
 describe("getTransferFactoryForFee", () => {
   const details = {
     sender: "requester::1",
-    feeReceiver: SIG,
+    feeReceiver: FA,
     instrumentAdmin: DSO,
     instrumentId: "Amulet",
     amount: "1.5",
@@ -325,21 +335,31 @@ describe("getTransferFactoryForFee", () => {
     transferKind: "direct",
     choiceContext: {
       disclosedContracts: [
-        { templateId: "#splice:AmuletRules", contractId: "ar::1", createdEventBlob: "b1", synchronizerId: "s" },
-        { templateId: "#splice:OpenMiningRound", contractId: "omr::1", createdEventBlob: "b2", synchronizerId: "s" },
+        {
+          templateId: "#splice:AmuletRules",
+          contractId: "ar::1",
+          createdEventBlob: "b1",
+          synchronizerId: "s",
+        },
+        {
+          templateId: "#splice:OpenMiningRound",
+          contractId: "omr::1",
+          createdEventBlob: "b2",
+          synchronizerId: "s",
+        },
       ],
-      choiceContextData: { values: { "k": "v" } },
+      choiceContextData: { values: { k: "v" } },
     },
   };
 
   function fetchStub(response: unknown, ok = true, status = 200) {
-    return vi.fn(async (_url: string, _init: RequestInit) =>
-      ({
+    return vi.fn((_url: string, _init: RequestInit) =>
+      Promise.resolve({
         ok,
         status,
-        json: async () => response,
-        text: async () => JSON.stringify(response),
-      }) as unknown as Response,
+        json: () => Promise.resolve(response),
+        text: () => Promise.resolve(JSON.stringify(response)),
+      } as unknown as Response),
     );
   }
 
@@ -355,10 +375,25 @@ describe("getTransferFactoryForFee", () => {
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe(`https://registry.example${TRANSFER_FACTORY_REGISTRY_PATH}`);
     expect(init.method).toBe("POST");
-    const body = JSON.parse(init.body as string);
+    const body = JSON.parse(init.body as string) as {
+      choiceArguments: {
+        expectedAdmin: string;
+        transfer: {
+          sender: string;
+          receiver: string;
+          amount: string;
+          instrumentId: { admin: string; id: string };
+          inputHoldingCids: string[];
+          requestedAt: string;
+          executeBefore: string;
+        };
+        extraArgs: { context: unknown };
+      };
+      excludeDebugFields: boolean;
+    };
     expect(body.choiceArguments.expectedAdmin).toBe(DSO);
     expect(body.choiceArguments.transfer.sender).toBe("requester::1");
-    expect(body.choiceArguments.transfer.receiver).toBe(SIG);
+    expect(body.choiceArguments.transfer.receiver).toBe(FA);
     expect(body.choiceArguments.transfer.amount).toBe("1.5");
     expect(body.choiceArguments.transfer.instrumentId).toEqual({ admin: DSO, id: "Amulet" });
     expect(body.choiceArguments.transfer.inputHoldingCids).toEqual(["h1", "h2"]);
@@ -403,45 +438,51 @@ describe("getTransferFactoryForFee", () => {
 // ---------------------------------------------------------------------------
 
 describe("assembleFeeChoiceArgs + collectFeeDisclosures", () => {
-  const fee = {
-    config: parseFeeConfig(feeConfig()),
-    contractId: "feecfg::1",
-    disclosure: {
-      templateId: "#daml-signer:SignerFee:SignerFeeConfig",
-      contractId: "feecfg::1",
-      createdEventBlob: "feeblob",
-      synchronizerId: "s",
-    } as DisclosedContract,
+  const collector: FeeCollectorContext = {
+    registrationCid: "reg::1",
+    collectorCid: "coll::1",
+    priceConfigCid: "cfg::1",
+    priceConfig: parsePriceConfig(priceConfigPayload()),
+    choiceContextData: {
+      values: { [PRICE_CONFIG_CONTEXT_KEY]: { tag: "AV_ContractId", value: "cfg::1" } },
+    },
+    disclosedContracts: [disclosure("reg::1"), disclosure("coll::1"), disclosure("cfg::1")],
   };
-  const factory = {
+  const factory: ResolvedTransferFactory = {
     transferFactoryCid: "factory::1",
-    transferContext: { values: { a: "b" } },
-    disclosedContracts: [
-      { templateId: "#splice:AmuletRules", contractId: "ar::1", createdEventBlob: "b1", synchronizerId: "s" } as DisclosedContract,
-    ],
+    transferContext: { values: { "splice.lfdecentralizedtrust.org/open-round": "round::7" } },
+    disclosedContracts: [disclosure("factory::1"), disclosure("rules::1")],
   };
-  const selection = { inputHoldingCids: ["h1", "h2"], total: "2.0" };
+  const selection = { inputHoldingCids: ["h::1", "h::2"], total: "2.0" };
 
-  it("folds resolved inputs into the choice arguments", () => {
-    const args = assembleFeeChoiceArgs(fee, factory, selection);
-    expect(args).toEqual({
-      feeConfigCid: "feecfg::1",
-      transferFactoryCid: "factory::1",
-      inputHoldingCids: ["h1", "h2"],
-      transferContext: { values: { a: "b" } },
+  it("builds the three choice args with a merged context", () => {
+    const args = assembleFeeChoiceArgs(collector, factory, selection);
+    expect(args.feeRegistrationCid).toBe("reg::1");
+    expect(args.feeInputs).toEqual(["h::1", "h::2"]);
+    expect(args.feeExtraArgs.meta).toEqual({ values: {} });
+    expect(args.feeExtraArgs.context.values[PRICE_CONFIG_CONTEXT_KEY]).toEqual({
+      tag: "AV_ContractId",
+      value: "cfg::1",
     });
+    expect(args.feeExtraArgs.context.values[TRANSFER_FACTORY_CONTEXT_KEY]).toEqual({
+      tag: "AV_ContractId",
+      value: "factory::1",
+    });
+    expect(args.feeExtraArgs.context.values["splice.lfdecentralizedtrust.org/open-round"]).toBe(
+      "round::7",
+    );
   });
 
-  it("collects fee + factory disclosures (fee config first)", () => {
-    const ds = collectFeeDisclosures(fee, factory);
-    expect(ds.map((d) => d.contractId)).toEqual(["feecfg::1", "ar::1"]);
-  });
-
-  it("appends extra disclosures when provided", () => {
-    const extra = [
-      { templateId: "#splice:Amulet", contractId: "hold::1", createdEventBlob: "hb", synchronizerId: "s" } as DisclosedContract,
-    ];
-    const ds = collectFeeDisclosures(fee, factory, extra);
-    expect(ds.map((d) => d.contractId)).toEqual(["feecfg::1", "ar::1", "hold::1"]);
+  it("collects fee-endpoint + registry disclosures, plus extras", () => {
+    const ds = collectFeeDisclosures(collector, factory);
+    expect(ds.map((d) => d.contractId)).toEqual([
+      "reg::1",
+      "coll::1",
+      "cfg::1",
+      "factory::1",
+      "rules::1",
+    ]);
+    const extra = disclosure("extra::1");
+    expect(collectFeeDisclosures(collector, factory, [extra]).at(-1)).toBe(extra);
   });
 });

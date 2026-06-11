@@ -63,7 +63,7 @@ export function hashEvmType2Params(p: CantonEvmType2Params): Hex {
  * Three-way consistency required: must match Daml RequestId.daml and Rust indexer_canton::generate_request_id() byte-for-byte.
  */
 export function computeRequestId(
-  sender: string, // operatorsHash, set on-ledger by SignRequest.Execute (NOT user-supplied)
+  sender: string, // operatorsHash, set on-ledger by Signer.RequestSignature (NOT user-supplied)
   txParams: TxParams,
   caip2Id: string,
   keyVersion: number,

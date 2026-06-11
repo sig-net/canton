@@ -4,10 +4,10 @@ import DA.Optional (fromSome, isSome)
 import DA.Crypto.Text (BytesHex, byteCount)
 import Daml.Script
 
-import Signer
+import Signer ()
 import Erc20Vault
-import TestVault (mkVaultFeeInfra)
-import Splice.Api.Token.MetadataV1 (emptyChoiceContext)
+import TestVault (mkVaultFeeInfra, mkSigner)
+import TestFeeCollector (noFeeExtras)
 import TestFixtures (testPubKeyHex, sampleVaultAddress, sampleEvmType2Params, erc20BoolSchema)
 
 dirtyVaultAddress : BytesHex
@@ -252,14 +252,14 @@ testSigningOrderIndependence = do
 -- propose vault with 2 operators, collect signatures, then run a deposit through the resulting vault
 testProposalToDepositLifecycle : Script ()
 testProposalToDepositLifecycle = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
-  op2        <- allocateParty "Op2"
-  requester  <- allocateParty "Requester"
+  sigNetwork   <- allocateParty "SigNetwork"
+  sigNetworkFA <- allocateParty "SigNetworkFA"
+  op1          <- allocateParty "Op1"
+  op2          <- allocateParty "Op2"
+  requester    <- allocateParty "Requester"
 
-  -- Step 1: Create Signer singleton
-  signerCid <- submit sigNetwork do
-    createCmd Signer with sigNetwork
+  -- Step 1: Create the co-signed Signer (sigNetwork proposes, sigNetworkFA accepts)
+  signerCid <- mkSigner sigNetwork sigNetworkFA
 
   -- Step 2: Propose vault with 2 operators
   proposalCid <- submit op1 do
@@ -283,15 +283,15 @@ testProposalToDepositLifecycle = do
   assertMsg "sigNetwork" (v.sigNetwork == sigNetwork)
 
   -- Step 4: RequestDeposit through the proposal-created vault
-  (feeConfigCid, transferFactoryCid) <- mkVaultFeeInfra sigNetwork
-  (signEventCid, pendingCid) <- submit (actAs requester <> readAs op1 <> readAs op2 <> readAs sigNetwork) do
+  feeRegistrationCid <- mkVaultFeeInfra sigNetworkFA
+  (signEventCid, pendingCid) <- submit (actAs requester <> readAs op1 <> readAs op2 <> readAs sigNetwork <> readAs sigNetworkFA) do
     exerciseCmd vaultCid RequestDeposit with
       requester; signerCid; path = partyToText requester
       evmTxParams = sampleEvmType2Params
       keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
-      feeConfigCid; transferFactoryCid; inputHoldingCids = []; transferContext = emptyChoiceContext
+      feeRegistrationCid; feeInputs = []; feeExtraArgs = noFeeExtras
 
   -- Verify deposit artifacts
   pending <- queryContractId requester pendingCid

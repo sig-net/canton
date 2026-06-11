@@ -1,0 +1,135 @@
+module TestCcFeeCollector where
+
+import DA.Assert ((===))
+import qualified DA.TextMap as TextMap
+import DA.Time (time)
+import DA.Date (date, Month(..))
+import Daml.Script
+
+import Splice.Api.Token.MetadataV1 (AnyValue(..), ChoiceContext(..), ExtraArgs(..), emptyMetadata)
+import Signet.Api.Fee.V1 (FeeCollector, FeeCollector_Charge(..))
+import Signet.Fee.Amulet
+import TestToken (MockTransferFactory(..), MockSettleMode(..))
+
+mid2026 : Time
+mid2026 = time (date 2026 Jun 1) 0 0 0
+
+-- valid all of 2026; admin/receiver = fa
+mkPriceConfig : Party -> Decimal -> FeePriceConfig
+mkPriceConfig fa amount = FeePriceConfig with
+  sigNetworkFA = fa
+  feeReceiver = fa
+  instrumentAdmin = fa
+  instrumentId = "Amulet"
+  feeAmount = amount
+  validFrom = time (date 2026 Jan 1) 0 0 0
+  validUntil = time (date 2026 Dec 31) 0 0 0
+  version = 0
+  meta = emptyMetadata
+
+-- charge context carrying the price config + optionally the transfer factory
+mkChargeContext : ContractId FeePriceConfig -> Optional (ContractId MockTransferFactory) -> ChoiceContext
+mkChargeContext priceCfgCid optFactory = ChoiceContext with
+  values = TextMap.fromList
+    ( (priceConfigContextKey, AV_ContractId (coerceContractId priceCfgCid))
+      :: case optFactory of
+           Some f -> [(transferFactoryContextKey, AV_ContractId (coerceContractId f))]
+           None -> []
+    )
+
+mkExtras : ChoiceContext -> ExtraArgs
+mkExtras ctx = ExtraArgs with context = ctx; meta = emptyMetadata
+
+setupCharge : Decimal -> MockSettleMode -> Script (Party, Party, ContractId CcFeeCollector, ContractId FeePriceConfig, ContractId MockTransferFactory)
+setupCharge feeAmount settleMode = do
+  setTime mid2026
+  fa <- allocateParty "fa"
+  payer <- allocateParty "payer"
+  collectorCid <- submit fa do
+    createCmd CcFeeCollector with sigNetworkFA = fa; feeReceiver = fa; meta = emptyMetadata
+  priceCfgCid <- submit fa do createCmd (mkPriceConfig fa feeAmount)
+  factoryCid <- submit fa do
+    createCmd MockTransferFactory with admin = fa; settleMode
+  pure (fa, payer, collectorCid, priceCfgCid, factoryCid)
+
+-- Happy path: the transfer settles one-step, the charge returns the config amount.
+testChargeHappyPath : Script ()
+testChargeHappyPath = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettleCompleted
+  result <- submit (actAs payer <> readAs fa) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (mkChargeContext priceCfgCid (Some factoryCid))
+  result.amountCharged === 1.0
+
+-- Fail-closed: a Pending outcome (no TransferPreapproval) aborts the charge.
+testChargeFailsClosedOnPending : Script ()
+testChargeFailsClosedOnPending = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettlePending
+  submitMustFail (actAs payer <> readAs fa) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (mkChargeContext priceCfgCid (Some factoryCid))
+
+-- Fail-closed: a Failed outcome aborts the charge.
+testChargeFailsClosedOnFailed : Script ()
+testChargeFailsClosedOnFailed = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettleFailed
+  submitMustFail (actAs payer <> readAs fa) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (mkChargeContext priceCfgCid (Some factoryCid))
+
+-- A price config signed by a different fee admin is rejected (validatePriceConfig).
+testChargeRejectsForeignPriceConfig : Script ()
+testChargeRejectsForeignPriceConfig = do
+  (fa, payer, collectorCid, _ownCfg, factoryCid) <- setupCharge 1.0 SettleCompleted
+  other <- allocateParty "otherFA"
+  foreignCfgCid <- submit other do createCmd (mkPriceConfig other 0.5)
+  submitMustFail (actAs payer <> readAs fa <> readAs other) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (mkChargeContext foreignCfgCid (Some factoryCid))
+
+-- An expired price config is rejected (the window check runs at charge time).
+testChargeRejectsExpiredPriceConfig : Script ()
+testChargeRejectsExpiredPriceConfig = do
+  (fa, payer, collectorCid, _ownCfg, factoryCid) <- setupCharge 1.0 SettleCompleted
+  let expiredCfg = (mkPriceConfig fa 1.0) with
+        validFrom = time (date 2026 Jan 1) 0 0 0
+        validUntil = time (date 2026 Mar 1) 0 0 0
+  expiredCid <- submit fa do createCmd expiredCfg
+  submitMustFail (actAs payer <> readAs fa) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (mkChargeContext expiredCid (Some factoryCid))
+
+-- Zero-fee waiver: feeAmount == 0.0 skips the transfer entirely — proven by
+-- omitting the factory from the context (a transfer attempt would abort).
+testChargeZeroFeeWaivesTransfer : Script ()
+testChargeZeroFeeWaivesTransfer = do
+  (fa, payer, collectorCid, _oneCcCfg, _factoryCid) <- setupCharge 1.0 SettleCompleted
+  zeroCfgCid <- submit fa do createCmd (mkPriceConfig fa 0.0)
+  result <- submit (actAs payer <> readAs fa) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (mkChargeContext zeroCfgCid None)
+  result.amountCharged === 0.0
+
+-- Missing price-config context key aborts.
+testChargeMissingPriceConfigKeyAborts : Script ()
+testChargeMissingPriceConfigKeyAborts = do
+  (fa, payer, collectorCid, _cfg, _factory) <- setupCharge 1.0 SettleCompleted
+  submitMustFail (actAs payer <> readAs fa) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (ChoiceContext with values = TextMap.empty)
+
+-- Fee due but no transfer factory in the context aborts.
+testChargeMissingFactoryKeyAborts : Script ()
+testChargeMissingFactoryKeyAborts = do
+  (fa, payer, collectorCid, priceCfgCid, _factory) <- setupCharge 1.0 SettleCompleted
+  submitMustFail (actAs payer <> readAs fa) do
+    exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs = []
+      extraArgs = mkExtras (mkChargeContext priceCfgCid None)

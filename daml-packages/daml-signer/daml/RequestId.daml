@@ -73,7 +73,7 @@ computeOperatorsHash operatorTexts =
 -- Request ID and response hash
 -- ---------------------------------------------------------------------------
 
--- must match Rust generate_request_id() and TS mpc/crypto.ts byte-for-byte; `sender` is operatorsHash, computed in SignRequest.Execute from on-ledger operators
+-- must match Rust generate_request_id() and TS mpc/crypto.ts byte-for-byte; `sender` is operatorsHash, computed in Signer.RequestSignature from on-ledger operators
 computeRequestId : Text -> TxParams -> Text -> Int -> Text -> Text -> Text -> Text -> BytesHex
 computeRequestId sender txParams caip2Id keyVersion path algo dest params =
   keccak256 $

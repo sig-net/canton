@@ -30,7 +30,7 @@ import {
   deriveDepositAddress, reconstructSignedTx, submitRawTransaction,
   toCantonHex, findCreated, type DisclosedContract,
   // CC signature fee
-  getCurrentFeeDisclosure, getTransferFactoryForFee, selectInputHoldings,
+  getFeeCollectorContext, getTransferFactoryForFee, selectInputHoldings,
   holdingInputsFromEvents, assembleFeeChoiceArgs, collectFeeDisclosures,
   HOLDING_INTERFACE_ID,
 } from "canton-sig";
@@ -44,7 +44,7 @@ const signerCid: string = "...";
 const vaultCid:  string = "...";
 const signerDisclosure: DisclosedContract = /* envelope */;
 const vaultDisclosure:  DisclosedContract = /* envelope */;
-const sigNetwork: string = "...";    // serves the SignerFeeConfig disclosure (Vault.sigNetwork)
+const sigNetworkFA: string = "...";  // featured-app party — the fee admin (Signer.sigNetworkFA)
 const ccRegistryUrl = "https://..."; // CC token-standard registry base
 const MPC_ROOT_PUBLIC_KEY = "04..."; // uncompressed secp256k1, no 0x
 const VAULT_ID  = "my-vault";        // matches Vault.vaultId
@@ -82,23 +82,24 @@ const evmTxParams = {
   chainId:              toCantonHex(11155111n, 32),
 };
 
-// 4. Assemble the CC signature-fee inputs (charged atomically inside Execute).
-//    Requires the fee infra standing — see proposals/cc-signature-fee-runbook.md.
-const fee = await getCurrentFeeDisclosure(canton, sigNetwork);
+// 4. Assemble the CC signature-fee inputs (charged atomically inside RequestSignature).
+//    In production the FA's fee endpoint serves the collector context; reading it
+//    directly (as here) needs read authority as the fee admin.
+const collector = await getFeeCollectorContext(canton, sigNetworkFA);
 const holdings = holdingInputsFromEvents(
   await canton.getInterfaceContracts([requester], HOLDING_INTERFACE_ID),
 );
-const selection = selectInputHoldings(holdings, fee.config.feeAmount);
+const selection = selectInputHoldings(holdings, collector.priceConfig.feeAmount);
 const factory = await getTransferFactoryForFee(ccRegistryUrl, {
   sender: requester,
-  feeReceiver: fee.config.feeReceiver,
-  instrumentAdmin: fee.config.instrumentAdmin,
-  instrumentId: fee.config.instrumentId,
-  amount: fee.config.feeAmount,
+  feeReceiver: collector.priceConfig.feeReceiver,
+  instrumentAdmin: collector.priceConfig.instrumentAdmin,
+  instrumentId: collector.priceConfig.instrumentId,
+  amount: collector.priceConfig.feeAmount,
   inputHoldingCids: selection.inputHoldingCids,
 });
-const feeArgs = assembleFeeChoiceArgs(fee, factory, selection);
-const feeDisclosures = collectFeeDisclosures(fee, factory);
+const feeArgs = assembleFeeChoiceArgs(collector, factory, selection);
+const feeDisclosures = collectFeeDisclosures(collector, factory);
 
 // 5. Exercise RequestDeposit. NOTE: pass disclosedContracts as the last arg.
 const depositTx = await canton.exerciseChoice(
@@ -108,7 +109,7 @@ const depositTx = await canton.exerciseChoice(
     keyVersion: 1, algo: "", dest: "", params: "",
     outputDeserializationSchema: '[{"name":"","type":"bool"}]',
     respondSerializationSchema:  '[{"name":"","type":"bool"}]',
-    ...feeArgs, // feeConfigCid, transferFactoryCid, inputHoldingCids, transferContext
+    ...feeArgs, // feeRegistrationCid, feeInputs, feeExtraArgs
   },
   undefined,
   [vaultDisclosure, signerDisclosure, ...feeDisclosures],
@@ -152,8 +153,8 @@ const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 
 `canton-sig` is a thin client; the on-ledger Daml contracts enforce custody. The TS side is responsible for:
 
-- **Use the right disclosed contracts.** `RequestDeposit` and `RequestWithdrawal` exercise `Vault`, the disclosed `Signer`, and the CC fee charge, so pass `[vaultDisclosure, signerDisclosure, ...feeDisclosures]` (the fee config + the registry's factory/`AmuletRules`/`OpenMiningRound`, from `collectFeeDisclosures`). `ClaimDeposit` and `CompleteWithdrawal` only exercise `Vault` plus visible evidence contracts, so pass `[vaultDisclosure]`; the stored `SignBidirectionalEvent` is visible to the requester and is archived internally by the Vault.
-- **The CC signature fee is fail-closed.** `RequestDeposit` / `RequestWithdrawal` abort unless the fee settles one-step. Resolve the inputs with `getCurrentFeeDisclosure` + `getTransferFactoryForFee` + `selectInputHoldings`/`holdingInputsFromEvents`, fold them via `assembleFeeChoiceArgs` / `collectFeeDisclosures`, and ensure the receiver's `TransferPreapproval` + the requester's CC funding are in place (proposals/cc-signature-fee-runbook.md). The off-ledger reprice job sizes `feeAmount` via `computeFeeCc`.
+- **Use the right disclosed contracts.** `RequestDeposit` and `RequestWithdrawal` exercise `Vault`, the disclosed `Signer`, and the CC fee charge, so pass `[vaultDisclosure, signerDisclosure, ...feeDisclosures]` (the fee registration/collector/price config + the registry's factory/`AmuletRules`/`OpenMiningRound`, from `collectFeeDisclosures`). `ClaimDeposit` and `CompleteWithdrawal` only exercise `Vault` plus visible evidence contracts, so pass `[vaultDisclosure]`; the stored `SignBidirectionalEvent` is visible to the requester and is archived internally by the Vault.
+- **The CC signature fee is fail-closed.** `RequestDeposit` / `RequestWithdrawal` abort unless the fee charge settles. Resolve the inputs with `getFeeCollectorContext` + `getTransferFactoryForFee` + `selectInputHoldings`/`holdingInputsFromEvents`, fold them via `assembleFeeChoiceArgs` / `collectFeeDisclosures`, and ensure the receiver's `TransferPreapproval` + the requester's CC funding are in place (design: `docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md`). The off-ledger reprice job sizes `FeePriceConfig.feeAmount` via `computeFeeCc`.
 - **Never trust `SignatureRespondedEvent.signature` alone** as proof of execution. Broadcast the resulting tx; wait for the EVM receipt; _then_ wait for `RespondBidirectionalEvent` (signed over the outcome) before exercising `ClaimDeposit` / `CompleteWithdrawal`. The Daml verification is what makes the outcome safe to act on.
 - **Treat `SEPOLIA_RPC_URL` (or any destination-chain RPC) as untrusted.** Validate the receipt status, confirmations as your domain requires.
 - **Recompute `requestId` and the deposit address with the helpers and assert they match the values inside `PendingDeposit` / your `Vault` instance.** `PendingDeposit.signEventCid` is kept for Vault cleanup after claim; you do not pass it to `ClaimDeposit`. If the derived values don't match, something out-of-band changed (operator set, vaultId, path) — abort.
@@ -166,7 +167,7 @@ Canton-format hex is bare lowercase hex, no `0x` prefix; `""` represents empty b
 
 `requestId` is `computeRequestId(sender, txParams, caip2Id, keyVersion, path, algo, dest, params)`:
 
-- `sender` — the operatorsHash. Set on-ledger by `SignRequest.Execute`; never user-supplied. Mirror it off-chain with the snippet above to verify.
+- `sender` — the operatorsHash. Set on-ledger by `Signer.RequestSignature`; never user-supplied. Mirror it off-chain with the snippet above to verify.
 - `caip2Id` — must equal whatever the Vault used, **not** necessarily the signed chainId. The test-mode Vault hardcodes `"eip155:1"` while signing for Sepolia (`11155111`) — a devnet workaround; on mainnet the chain is genuinely `eip155:1`, so `chainIdHexToCaip2(evmTxParams.chainId)` matches and no hardcode is needed. Use whichever the Vault uses, or the recomputed `requestId` won't match.
 - `keyVersion` — `KEY_VERSION` (`1`).
 - `path` — what you passed in. The Vault prefixes with `${vaultId},${requester},` for deposits and uses `${vaultId},root` internally for the sweep address.
@@ -216,7 +217,7 @@ Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 
 ### Re-exported Daml templates
 
-From `@daml.js/daml-signer-0.0.1` and `@daml.js/daml-vault-poc-0.0.1`: `Signer`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `SignRequest`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
+From `@daml.js/daml-signer-0.0.1` and `@daml.js/daml-vault-poc-0.0.1`: `Signer`, `SignerProposal`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
 
 ### Types
 

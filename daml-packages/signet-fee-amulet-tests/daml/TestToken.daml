@@ -1,0 +1,70 @@
+module TestToken where
+
+-- Test-only mock implementations of the Splice token-standard interfaces, so
+-- CcFeeCollector's charge can be unit-tested deterministically without the live
+-- Amulet runtime. MockHolding mirrors the upstream DummyHolding example
+-- (DSO/admin-signed, owner as observer); MockTransferFactory's settleMode
+-- exercises all three charge branches (Completed vs Pending vs Failed).
+
+import Splice.Api.Token.HoldingV1 (Holding, HoldingView (..), InstrumentId)
+import Splice.Api.Token.MetadataV1 (emptyMetadata)
+import Splice.Api.Token.TransferInstructionV1
+  ( TransferFactory
+  , TransferFactoryView (..)
+  , TransferInstructionResult (..)
+  , TransferInstructionResult_Output (..)
+  )
+
+template MockHolding
+  with
+    admin : Party
+    owner : Party
+    instrumentId : InstrumentId
+    amount : Decimal
+  where
+    signatory admin
+    observer owner
+    interface instance Holding for MockHolding where
+      view = HoldingView with
+        owner
+        instrumentId
+        amount
+        lock = None
+        meta = emptyMetadata
+
+-- SettleCompleted -> Completed (simulates the receiver's TransferPreapproval)
+-- SettlePending   -> Pending   (no preapproval; two-step offer — charge must abort)
+-- SettleFailed    -> Failed    (transfer failure — charge must abort)
+data MockSettleMode = SettleCompleted | SettlePending | SettleFailed
+  deriving (Eq, Show)
+
+template MockTransferFactory
+  with
+    admin : Party
+    settleMode : MockSettleMode
+  where
+    signatory admin
+    interface instance TransferFactory for MockTransferFactory where
+      view = TransferFactoryView with admin; meta = emptyMetadata
+
+      transferFactory_publicFetchImpl _selfCid _arg =
+        pure (TransferFactoryView with admin; meta = emptyMetadata)
+
+      transferFactory_transferImpl selfCid _arg = case settleMode of
+        SettleCompleted ->
+          pure TransferInstructionResult with
+            output = TransferInstructionResult_Completed with receiverHoldingCids = []
+            senderChangeCids = []
+            meta = emptyMetadata
+        SettlePending ->
+          pure TransferInstructionResult with
+            -- the cid is never fetched by a fail-closed caller (it aborts on
+            -- Pending), so a coerced placeholder is fine for tests
+            output = TransferInstructionResult_Pending with transferInstructionCid = coerceContractId selfCid
+            senderChangeCids = []
+            meta = emptyMetadata
+        SettleFailed ->
+          pure TransferInstructionResult with
+            output = TransferInstructionResult_Failed
+            senderChangeCids = []
+            meta = emptyMetadata

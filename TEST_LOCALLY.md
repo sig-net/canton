@@ -9,11 +9,11 @@ If you want a fully local loop instead — an **MPC node running against a local
 In a single `cargo test` run it starts:
 
 - a local **Canton sandbox** — it literally shells out to `dpm sandbox --json-api-port 7575 -c <generated-auth.conf>` (`integration-tests/src/canton.rs`), with JWT/JWKS auth via a local OIDC test provider;
-- the **`daml-vault` DAR** loaded into it, and a freshly created `Signer` contract + parties (`SigNetwork` / `Operator` / `Requester`);
+- the **`daml-vault` DAR** loaded into it, and a freshly created `Signer` contract (co-signed by `SigNetwork` + `SigNetworkFA` via `SignerProposal` → `AcceptSigner`) + parties (`SigNetwork` / `SigNetworkFA` / `Operator` / `Requester`);
 - an **`mpc-node` cluster** wired to that sandbox;
 - a local **Anvil** EVM container that the signed EIP-1559 txs are relayed to.
 
-It then submits a `SignRequest`, waits for the cluster to threshold-sign (`SignatureRespondedEvent`), relays the signed tx to Anvil, and verifies the bidirectional outcome (`RespondBidirectionalEvent`).
+It then submits a sign request via `Signer.RequestSignature`, waits for the cluster to threshold-sign (`SignatureRespondedEvent`), relays the signed tx to Anvil, and verifies the bidirectional outcome (`RespondBidirectionalEvent`).
 
 ## Where it lives (in the `mpc` repo)
 

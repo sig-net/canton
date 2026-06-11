@@ -6,7 +6,7 @@
 
 ```bash
 dpm build --all
-for pkg in daml-abi daml-uint256 daml-eip712 daml-signer daml-vault; do
+for pkg in daml-abi daml-uint256 daml-eip712 signet-fee-amulet-tests daml-signer-tests daml-vault-tests; do
   (cd daml-packages/$pkg && dpm test)
 done
 ```
