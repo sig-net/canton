@@ -50,8 +50,8 @@ export interface FeePricingResult {
   feeCc: string;
 }
 
-/** Daml `Decimal` scale (`Numeric 10`); the posted `feeAmount` is rounded to this. */
-const CC_SCALE = 10;
+/** Daml `Decimal` is `Numeric 10`; Canton Coin (Amulet) amounts use scale 10. */
+export const CC_DECIMALS = 10;
 
 /**
  * Compute the CC fee per §6.3.
@@ -82,5 +82,5 @@ export function computeFeeCc(inputs: FeePricingInputs): FeePricingResult {
 
   const costUsd = (bytes / 1_000_000) * extraTrafficPriceUsdPerMb;
   const feeCcRaw = (costUsd / amuletPriceUsdPerCc) * (1 + coverage + profit);
-  return { costUsd, feeCc: feeCcRaw.toFixed(CC_SCALE) };
+  return { costUsd, feeCc: feeCcRaw.toFixed(CC_DECIMALS) };
 }

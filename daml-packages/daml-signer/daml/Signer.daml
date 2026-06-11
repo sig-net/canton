@@ -94,8 +94,8 @@ template Signer
       controller operators, requester
       do
         -- body authority = {sigNetwork, sigNetworkFA} ∪ {operators, requester}
-        assertMsg "operators must be non-empty" (not (null operators))
-        assertMsg "operators must be unique" (unique operators)
+        -- operators non-empty/unique are enforced by the event's `ensure`; only
+        -- the EVM-params check fails fast here, before the fee-charge subtree.
         assertMsg "invalid tx params" (validTxParams txParams)
 
         -- Charge the CC fee first via the registered FeeCollector. The

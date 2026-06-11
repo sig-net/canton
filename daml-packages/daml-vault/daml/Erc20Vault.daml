@@ -295,13 +295,7 @@ template Vault
         params           : Text
         outputDeserializationSchema : Text
         respondSerializationSchema  : Text
-        -- CC signature-fee inputs (docs/superpowers/specs/
-        -- 2026-06-10-signer-fee-architecture-design.md §5.4): the requester pays
-        -- the featured-app fee atomically inside Signer.RequestSignature via the
-        -- registered late-bound FeeCollector. Sourced client-side as disclosed
-        -- contracts (FA fee endpoint + token registry); the charge fail-closes
-        -- the whole request unless it settles. Opaque by design — these three
-        -- args are expected to never change again for fee reasons.
+        -- CC signature-fee inputs: see RequestDeposit above.
         feeRegistrationCid : ContractId FeeCollectorRegistration
         feeInputs          : [ContractId Holding]
         feeExtraArgs       : ExtraArgs
