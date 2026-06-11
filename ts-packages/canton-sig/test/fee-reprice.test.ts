@@ -61,7 +61,7 @@ function txWithCreated(contractId: string): TransactionResponse {
   } as unknown as TransactionResponse;
 }
 
-// §6.3 golden: 400KB @ $1/MB, $0.005/CC, coverage 0.15 + profit 0.10 → 100 CC.
+// Fee-formula golden: 400KB @ $1/MB, $0.005/CC, coverage 0.15 + profit 0.10 → 100 CC.
 const MARKET: MarketInputs = {
   bytes: 400_000,
   extraTrafficPriceUsdPerMb: 1,
@@ -143,7 +143,7 @@ describe("findLatestPriceConfig", () => {
 // ---------------------------------------------------------------------------
 
 describe("repriceOnce", () => {
-  it("bootstraps (create, version 0) when no config exists, posting the §6.3 fee", async () => {
+  it("bootstraps (create, version 0) when no config exists, posting the golden fee", async () => {
     const { client, createContract, exerciseChoice } = fakeClient([]);
     const r = await repriceOnce(client, baseConfig(), { nowMs: NOW });
 

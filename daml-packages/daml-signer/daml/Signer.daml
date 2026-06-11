@@ -68,8 +68,7 @@ template Signer
     -- `requester` are the controllers (the anti-forgery gate — exactly the event's
     -- value signatories); `sigNetworkFA` rides along as an ambient co-signatory from
     -- the co-signed Signer, so a compromised sigNetwork (still observer-only on the
-    -- event) cannot forge a request. Replaces the old SignBidirectional + the
-    -- transient SignRequest.Execute, which are removed.
+    -- event) cannot forge a request.
     nonconsuming choice RequestSignature : ContractId SignBidirectionalEvent
       with
         operators                   : [Party]

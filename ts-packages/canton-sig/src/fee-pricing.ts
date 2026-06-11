@@ -1,13 +1,11 @@
 /**
  * Off-ledger CC fee pricing (sigNetworkFA reprice automation).
  *
- * Implements the `fee_cc` computation
- * (`docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md` §11).
- * The fee admin's ~10-minute reprice job (`fee-reprice.ts`, running as
- * `sigNetworkFA`) calls {@link computeFeeCc} with the current Scan /
- * `OpenMiningRound` inputs and posts the result via `FeePriceConfig.UpdateFee`.
- * The charge implementation (`CcFeeCollector`) reads only the resulting flat CC
- * value, so none of this math runs on-ledger.
+ * Implements the `fee_cc` computation. The fee admin's ~10-minute reprice job
+ * (`fee-reprice.ts`, running as `sigNetworkFA`) calls {@link computeFeeCc} with
+ * the current Scan / `OpenMiningRound` inputs and posts the result via
+ * `FeePriceConfig.UpdateFee`. The charge implementation (`CcFeeCollector`)
+ * reads only the resulting flat CC value, so none of this math runs on-ledger.
  *
  * ```text
  * cost_usd = bytes / 1e6 * extraTrafficPrice            # gross traffic cost (USD)
@@ -54,7 +52,7 @@ export interface FeePricingResult {
 export const CC_DECIMALS = 10;
 
 /**
- * Compute the CC fee per §6.3.
+ * Compute the CC fee per the module-header formula.
  *
  * Float math is intentional — these are point-in-time price estimates re-pegged
  * every ~10 min with a coverage buffer, not exact ledger amounts. The result is

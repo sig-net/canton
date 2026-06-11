@@ -1,6 +1,5 @@
 /**
- * CC signature-fee reprice cron entrypoint
- * (`docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md` §11).
+ * CC signature-fee reprice cron entrypoint.
  *
  * Bootstraps and then periodically reprices the sigNetworkFA-signed `FeePriceConfig`:
  * reads the current market inputs, prices via `computeFeeCc`, and posts via create
@@ -13,7 +12,7 @@
  * price and the measured post-back `bytes` — should be read live from Scan / the
  * current `OpenMiningRound`. This entrypoint reads them from env so it is runnable
  * today without binding an unverified Scan wire shape; for production, replace
- * {@link RepriceConfig.getMarketInputs} with a real Scan/OMR reader (spec §11).
+ * {@link RepriceConfig.getMarketInputs} with a real Scan/OMR reader.
  * The fee math itself stays off-ledger — only the CC number is posted.
  *
  * @module

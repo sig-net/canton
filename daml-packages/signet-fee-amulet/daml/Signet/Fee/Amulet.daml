@@ -3,8 +3,7 @@
 -- pricing plumbing) — including the splice transfer-instruction dependency —
 -- and evolves by SCU or replacement with ZERO rebuilds of `signet-api-fee-v1`,
 -- `daml-signer`, `daml-vault`, or clients: `FeeCollector_Charge` is dispatched
--- late-bound at runtime. Design:
--- docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md §5.2.
+-- late-bound at runtime.
 module Signet.Fee.Amulet where
 
 import qualified DA.TextMap as TextMap
@@ -29,11 +28,10 @@ validatePriceConfig expectedSigNetworkFA now cfg
   | now > cfg.validUntil = Left "Fee price config expired"
   | otherwise = Right ()
 
--- | Successor of the Signer package's former built-in fee config, now
--- implementation-internal and FA-owned. Repriced ~every 10 min (≈ one OpenMiningRound cycle)
--- by the off-ledger `fee-reprice.ts` automation running as `sigNetworkFA`.
--- Referenced at charge time via `extraArgs.context` (`priceConfigContextKey`)
--- and attached as a disclosure by the FA fee endpoint.
+-- | FA-owned, implementation-internal fee price. Repriced ~every 10 min
+-- (≈ one OpenMiningRound cycle) by the off-ledger `fee-reprice.ts` automation
+-- running as `sigNetworkFA`. Referenced at charge time via `extraArgs.context`
+-- (`priceConfigContextKey`) and attached as a disclosure by the FA fee endpoint.
 template FeePriceConfig
   with
     sigNetworkFA    : Party    -- fee admin + identity binding: must equal the Signer's sigNetworkFA

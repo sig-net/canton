@@ -19,7 +19,7 @@
  *
  * THIS MUTATES THE LIVE LEDGER AND SPENDS DEVNET FUNDS. It only runs when the
  * MPC_CANTON_* + funding env is present AND MPC_CANTON_LIVE_MUTATE=1; otherwise it
- * is skipped. For a local loop instead, see ../../../TEST_LOCALLY.md (Rust mpc repo).
+ * is skipped.
  */
 import "dotenv/config";
 import { describe, it, expect, beforeAll } from "vitest";
@@ -142,7 +142,7 @@ const EnvSchema = z.object({
   // disclosures (AmuletRules/OpenMiningRound) for the signature fee. Required:
   // the Daml charges the fee on every RequestDeposit/RequestWithdrawal, and the
   // fee registration/collector/price config + receiver preapproval must already
-  // be standing (docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md).
+  // be standing.
   MPC_CANTON_CC_REGISTRY_URL: z.url(),
   // Sepolia RPC — we fund derived addresses and broadcast the MPC-signed txs here.
   MPC_CANTON_ETH_RPC_URL: z.url(),
@@ -359,8 +359,7 @@ async function signAndBroadcast(
  * stakeholder) and the fee transfer is a self-transfer settled via the party's
  * own `TransferPreapproval`. Requires the fee infra to be standing
  * (CcFeeCollector + FeeCollectorRegistration + FeePriceConfig posted,
- * preapproval + featured-app right live) and the CC token-standard registry —
- * see the design spec §10–§11.
+ * preapproval + featured-app right live) and the CC token-standard registry.
  *
  * Returns the three fee choice args (spread into the choice record) and the
  * disclosures to append to the submission (registration/collector/price config

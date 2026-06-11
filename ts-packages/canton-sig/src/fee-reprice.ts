@@ -1,6 +1,5 @@
 /**
- * CC signature-fee reprice automation — the off-ledger pricing writer of
- * `docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md` §11.
+ * CC signature-fee reprice automation — the off-ledger pricing writer.
  *
  * {@link computeFeeCc} *prices* the fee off-ledger; this module is what actually
  * *posts* that price on-ledger and keeps it fresh. It owns the two write paths:
@@ -21,8 +20,8 @@
  * The fast-moving market inputs (`amuletPrice`, extra-traffic price, measured
  * post-back bytes) are read off-ledger and supplied via
  * {@link RepriceConfig.getMarketInputs} — the Scan / `OpenMiningRound` seam — so
- * this module needs no `splice-amulet` dependency (spec §11) and is fully
- * unit-testable without a live ledger or Scan.
+ * this module needs no `splice-amulet` dependency and is fully unit-testable
+ * without a live ledger or Scan.
  *
  * @module
  */
@@ -67,7 +66,7 @@ export interface RepriceConfig {
   coverage: number;
   /** Profit margin fraction (e.g. `0.10`). */
   profit: number;
-  /** Validity-window length in minutes; the runbook suggests ~30 (≈3× the reprice interval). */
+  /** Validity-window length in minutes; ~30 (≈3× the reprice interval) is a sensible default. */
   windowMinutes: number;
   /** Reads the current off-ledger market inputs (the Scan / `OpenMiningRound` seam). */
   getMarketInputs: () => Promise<MarketInputs>;
