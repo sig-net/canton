@@ -3,7 +3,7 @@
  *
  * Uses keccak256-based PRNG seeded with a fixed string so output is
  * perfectly reproducible across runs. Writes:
- *   - daml/TestFuzz.daml (complete Daml module with forA_ loops)
+ *   - ../daml-uint256-tests/daml/TestFuzz.daml (complete Daml module with forA_ loops)
  *   - uint256-ts-fragment.txt (TS fragment for manual insertion)
  *
  * Usage: npx tsx test/scripts/generate-uint256-vectors.ts
@@ -318,7 +318,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "../../../..");
 
-const testFuzzPath = resolve(projectRoot, "daml-packages/daml-uint256/daml/TestFuzz.daml");
+const testFuzzPath = resolve(projectRoot, "daml-packages/daml-uint256-tests/daml/TestFuzz.daml");
 writeFileSync(resolve(projectRoot, "uint256-ts-fragment.txt"), tsFragment);
 writeFileSync(testFuzzPath, damlFile);
 

@@ -26,7 +26,7 @@ It then submits a sign request via `Signer.RequestSignature`, waits for the clus
 
 ## Prerequisites
 
-- **dpm** (Daml SDK 3.4.11) on `PATH`: `curl -fsSL https://get.digitalasset.com/install/install.sh | sh`, then add `~/.dpm/bin`
+- **dpm** (Daml SDK 3.5.1) on `PATH`: `curl -fsSL https://get.digitalasset.com/install/install.sh | sh`, then add `~/.dpm/bin`
 - **Java 21** (Canton runs on the JVM)
 - **Docker** (Redis + the Anvil EVM container)
 - **Rust 1.81** (+ `wasm32-unknown-unknown` target) and **Node 18+** (for the eth contract build)

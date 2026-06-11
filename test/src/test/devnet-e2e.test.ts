@@ -124,13 +124,19 @@ const EnvSchema = z.object({
   MPC_CANTON_SIGNER_CONTRACT_ID: z.string().min(1),
   MPC_CANTON_SIGNER_TEMPLATE_ID: z
     .string()
-    .regex(/^[0-9a-fA-F]{64}:[^:]+:[^:]+$/, "expected packageId:Module:Entity"),
+    .regex(
+      /^(#[^\s:]+|[0-9a-fA-F]{64}):[^:]+:[^:]+$/,
+      "expected #package-name:Module:Entity (3.5+) or packageId:Module:Entity",
+    ),
   MPC_CANTON_SIGNER_CREATED_EVENT_BLOB: z.string().min(1),
   MPC_CANTON_SIGNER_SYNCHRONIZER_ID: z.string().min(1),
   MPC_CANTON_VAULT_CONTRACT_ID: z.string().min(1),
   MPC_CANTON_VAULT_TEMPLATE_ID: z
     .string()
-    .regex(/^[0-9a-fA-F]{64}:[^:]+:[^:]+$/, "expected packageId:Module:Entity"),
+    .regex(
+      /^(#[^\s:]+|[0-9a-fA-F]{64}):[^:]+:[^:]+$/,
+      "expected #package-name:Module:Entity (3.5+) or packageId:Module:Entity",
+    ),
   // MPC cluster root pubkey — NAJ (`secp256k1:base58…`) or uncompressed SEC1.
   MPC_CANTON_ROOT_PUBLIC_KEY: z
     .string()

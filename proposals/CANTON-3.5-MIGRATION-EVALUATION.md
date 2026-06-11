@@ -7,6 +7,20 @@
 
 > Note: "Daml 3.5.1" here means **Canton 3.5.1** (released 2026-05-27), the first GA of the 3.5 line — i.e. the whole 3.4 → 3.5 generation jump. There is no separate Daml _SDK_ 3.5.1 GitHub release; `3.5.1` is the platform/`sdk-version`.
 
+> **Implementation status (2026-06-11).** The toolchain migration is executed:
+> all `daml.yaml`s + CI pin SDK `3.5.1`, every Daml/TS suite passes on it, and
+> codegen is regenerated against the 3.5.1 OpenAPI (default Daml-LF target is
+> unchanged at 2.2, so DARs stay PV-34-deployable). The 3.5 compiler's new
+> `template-interface-depends-on-daml-script` warning prompted splitting the
+> inline `daml-abi`/`daml-eip712`/`daml-uint256` tests into `*-tests` packages —
+> shipped DARs no longer bundle `daml-script`. The MPC repo pins its CI sandbox
+> to 3.5.1 and documents the `#daml-signer:Signer:Signer` template-id form
+> (sandbox-verified on 3.5.1: package-id refs are **rejected on read filters**,
+> still tolerated-deprecated on command submission — §6's read-side claim
+> confirmed). Pending: the LF 2.3 retarget (`--target=2.3`, drops the crypto
+> alpha flag) once the global synchronizer's LSU to PV 35 lands, and a DevNet
+> e2e run against the redeployed baseline.
+
 ---
 
 ## TL;DR — Verdict
