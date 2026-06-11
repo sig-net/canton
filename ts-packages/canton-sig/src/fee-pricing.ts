@@ -1,11 +1,13 @@
 /**
- * Off-ledger CC fee pricing (sigNetwork reprice automation).
+ * Off-ledger CC fee pricing (sigNetworkFA reprice automation).
  *
- * Implements the `fee_cc` computation from `proposals/cc-signature-fee.md` §6.3.
- * sigNetwork's ~10-minute reprice job calls {@link computeFeeCc} with the
- * current Scan / `OpenMiningRound` inputs and posts the result via
- * `SignerFeeConfig.UpdateFee`. `Execute` reads only the resulting flat CC value,
- * so none of this math runs on-ledger.
+ * Implements the `fee_cc` computation
+ * (`docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md` §11).
+ * The fee admin's ~10-minute reprice job (`fee-reprice.ts`, running as
+ * `sigNetworkFA`) calls {@link computeFeeCc} with the current Scan /
+ * `OpenMiningRound` inputs and posts the result via `FeePriceConfig.UpdateFee`.
+ * The charge implementation (`CcFeeCollector`) reads only the resulting flat CC
+ * value, so none of this math runs on-ledger.
  *
  * ```text
  * cost_usd = bytes / 1e6 * extraTrafficPrice            # gross traffic cost (USD)
@@ -20,7 +22,7 @@
  * @module
  */
 
-/** Inputs to the §6.3 `fee_cc` formula. All prices are point-in-time reads. */
+/** Inputs to the `fee_cc` formula above. All prices are point-in-time reads. */
 export interface FeePricingInputs {
   /**
    * Measured billable bytes of `Respond` + `RespondBidirectional` (Scan
@@ -68,10 +70,14 @@ export function computeFeeCc(inputs: FeePricingInputs): FeePricingResult {
 
   const finiteNonNeg = (n: number) => Number.isFinite(n) && n >= 0;
   if (![bytes, extraTrafficPriceUsdPerMb, coverage, profit].every(finiteNonNeg)) {
-    throw new Error(`computeFeeCc: inputs must be finite and non-negative: ${JSON.stringify(inputs)}`);
+    throw new Error(
+      `computeFeeCc: inputs must be finite and non-negative: ${JSON.stringify(inputs)}`,
+    );
   }
   if (!Number.isFinite(amuletPriceUsdPerCc) || amuletPriceUsdPerCc <= 0) {
-    throw new Error(`computeFeeCc: amuletPriceUsdPerCc must be positive, got ${amuletPriceUsdPerCc}`);
+    throw new Error(
+      `computeFeeCc: amuletPriceUsdPerCc must be positive, got ${amuletPriceUsdPerCc}`,
+    );
   }
 
   const costUsd = (bytes / 1_000_000) * extraTrafficPriceUsdPerMb;

@@ -7,12 +7,11 @@ For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For a
 ## How this fits together
 
 ```
-+--------------------+    create + exercise    +----------------------+
++--------------------+        exercise         +----------------------+
 | Consumer contract  | ----------------------> | Canton (Signer)      |
-|  (operators+req.)  |    SignRequest +        |   SignBidirectional  |
-+--------------------+    SignBidirectional    |     -> Execute       |
-        ^                                      |   SignBidirEvent     |
-        |                                      +-----------+----------+
+|  (operators+req.)  |    RequestSignature     |   RequestSignature   |
++--------------------+                         |   -> SignBidirEvent  |
+        ^                                      +-----------+----------+
         |                                                  |
         |  SignatureRespondedEvent                         | observed off-Canton
         |  RespondBidirectionalEvent                       v
@@ -20,6 +19,13 @@ For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For a
                                                     Canton evidence
                                                     contracts asynchronously)
 ```
+
+The `Signer` is co-signed by two parties: `sigNetwork` (the MPC service) and
+`sigNetworkFA` (the featured-app provider party). `sigNetworkFA` consents once, when the
+`Signer` is created via the `SignerProposal`/`AcceptSigner` ceremony; thereafter it is an
+ambient co-signatory on every sign/evidence event — i.e. a CIP-0104 confirmer — without
+co-submitting any transaction. It is never an authorizer of a request (only
+`operators + requester` are), so it cannot forge or initiate signing.
 
 For each `SignBidirectionalEvent` you emit, the MPC publishes two evidence contracts back on Canton:
 
@@ -36,11 +42,11 @@ The Signer enforces operator-set isolation, not replay protection — calldata v
 data-dependencies:
   - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
   - ../daml-eip712/.daml/dist/daml-eip712-0.0.1.dar # transitive — required at compile time
-  # SignBidirectional/Execute take token-standard fee args (see "CC signature fee"),
-  # so a consumer that threads them needs the vendored interface DARs too:
+  # RequestSignature takes the fee args (see "CC signature fee"), so a consumer
+  # that threads them needs the frozen fee API + the vendored interface DARs:
+  - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
   - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
   - ../vendor/splice-api-token-holding-v1-1.0.0.dar
-  - ../vendor/splice-api-token-transfer-instruction-v1-1.0.0.dar
   # add daml-abi if you need the calldata-decoding helpers used by daml-vault:
   # - ../daml-abi/.daml/dist/daml-abi-0.0.1.dar
 build-options:
@@ -51,25 +57,24 @@ Daml imports:
 
 ```daml
 import Signer
-  ( Signer, SignRequest(..), SignBidirectionalEvent(..)
+  ( Signer, RequestSignature(..), SignBidirectionalEvent(..)
   , SignatureRespondedEvent(..), RespondBidirectionalEvent(..)
-  , SignBidirectional(..)
+  , Consume_SignBidirectional(..)
   , Consume_SignatureResponded(..), Consume_RespondBidirectional(..)
   , requestIdFromSignEvent, signatureDer, validSignature
   , Signature(..), EcdsaSigData(..)
   )
-import SignerFee (SignerFeeConfig)
 import EvmTypes (EvmType2TransactionParams(..), EvmAccessListEntry(..))
 import TxParams (TxParams(..))
 import RequestId (computeRequestId, computeResponseHash)
+import Signet.Api.Fee.V1 (FeeCollectorRegistration)
 import Splice.Api.Token.HoldingV1 (Holding)
-import Splice.Api.Token.MetadataV1 (ChoiceContext)
-import Splice.Api.Token.TransferInstructionV1 (TransferFactory)
+import Splice.Api.Token.MetadataV1 (ExtraArgs)
 ```
 
 You'll be given two things to integrate against.
 
-**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `SignBidirectional`). It carries no secrets — treat it as config. Current DevNet payload:
+**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `RequestSignature`). It carries no secrets — treat it as config. Current DevNet payload:
 
 ```json
 {
@@ -84,7 +89,7 @@ You'll be given two things to integrate against.
 
 **2. The MPC root secp256k1 public key** (uncompressed, hex). Derive two children off-ledger with the Canton KDF — `ε = keccak256(prefix : chainId : predecessorId : path)`, child = `rootPub + ε·G`, with `predecessorId = sender = operatorsHash`. The prefix (`"sig.network v2.0.0 epsilon derivation"`) and `canton:global` chain id are authoritative in signet.js: [`deriveChildPublicKey`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/utils/cryptography.ts#L90-L122), [`KDF_CHAIN_IDS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L35-L39):
 
-- The **EVM child address** (`path` = whatever you pass on `SignRequest`; `canton-sig`'s `deriveDepositAddress` does this in one call).
+- The **EVM child address** (`path` = whatever you pass on `RequestSignature`; `canton-sig`'s `deriveDepositAddress` does this in one call).
 - The **response-verification pubkey** for constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).
 
 ## Integrator lifecycle
@@ -102,12 +107,11 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
     signerCid    : ContractId Signer
     evmTxParams  : EvmType2TransactionParams
     userPath     : Text
-    -- CC signature-fee inputs, threaded straight through to SignBidirectional.
+    -- CC signature-fee inputs, threaded straight through to RequestSignature.
     -- Sourced client-side as disclosed contracts; see "CC signature fee" below.
-    feeConfigCid       : ContractId SignerFeeConfig
-    transferFactoryCid : ContractId TransferFactory
-    inputHoldingCids   : [ContractId Holding]
-    transferContext    : ChoiceContext
+    feeRegistrationCid : ContractId FeeCollectorRegistration
+    feeInputs          : [ContractId Holding]
+    feeExtraArgs       : ExtraArgs
   controller requester
   do
     -- 1a. Domain-level authorization. The Signer signs whatever bytes you hand it,
@@ -118,8 +122,14 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
     let caip2Id = "eip155:" <> chainIdToDecimalText evmTxParams.chainId   -- destination CAIP-2
     let fullPath = myDeploymentId <> "," <> partyToText requester <> "," <> userPath
 
-    signReqCid <- create SignRequest with
-      operators; requester; sigNetwork
+    -- 1c. Exercise the disclosed Signer directly. Your choice body holds operators
+    -- (signatory) + requester (controller) — exactly RequestSignature's controllers — and
+    -- the co-signed Signer supplies sigNetworkFA ambiently. RequestSignature charges the CC
+    -- signature fee, derives `sender` from the on-ledger operators, and creates the
+    -- MPC-visible SignBidirectionalEvent, all in one transaction. It aborts (no event)
+    -- unless the fee settles. (`sigNetwork` is NOT passed — the Signer knows its own.)
+    signEventCid <- exercise signerCid RequestSignature with
+      operators; requester
       txParams = EvmType2TxParams evmTxParams
       caip2Id
       keyVersion = 1
@@ -129,13 +139,7 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
       params = ""                                 -- always ""
       outputDeserializationSchema = "[{\"name\":\"\",\"type\":\"bool\"}]"
       respondSerializationSchema  = "[{\"name\":\"\",\"type\":\"bool\"}]"
-
-    -- 1c. Hand off to the disclosed Signer. This consumes the SignRequest via Execute,
-    -- charges the CC signature fee, and creates the MPC-visible SignBidirectionalEvent —
-    -- all in the same transaction. Execute aborts (no event) unless the fee settles.
-    signEventCid <- exercise signerCid SignBidirectional with
-      signRequestCid = signReqCid; requester
-      feeConfigCid; transferFactoryCid; inputHoldingCids; transferContext
+      feeRegistrationCid; feeInputs; feeExtraArgs
 
     -- 1d. Recompute the requestId for your anchor — the Daml/TS/Rust impls produce
     -- byte-identical hashes (see "requestId formula" below).
@@ -161,7 +165,7 @@ Notes:
 
 ### 2. The MPC service responds (off-Canton, asynchronous)
 
-The MPC service watches `SignBidirectionalEvent` (signatory `operators, requester`; observer `sigNetwork`) and produces **two** Canton events for each request — but they have different roles:
+The MPC service watches `SignBidirectionalEvent` (signatory `operators, requester, sigNetworkFA`; observer `sigNetwork`) and produces **two** Canton events for each request — but they have different roles:
 
 | Event                                 | Signed by                                                                                                                         | Covers                                                   | Use                                                                                                                                                                    |
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -218,9 +222,9 @@ nonconsuming choice MyDomainClaim : ...
     exercise signatureRespondedEventCid   Consume_SignatureResponded   with actor = requester
 
     -- Clean up the original request event after both response contracts are
-    -- validated and consumed. The choice body has operators + requester
-    -- authority, so it can archive SignBidirectionalEvent directly.
-    archive anchor.signEventCid
+    -- validated and consumed. SignBidirectionalEvent is co-signed by sigNetworkFA, so a
+    -- plain `archive` would lack its authority — retire it via the delegated choice.
+    exercise anchor.signEventCid Consume_SignBidirectional with actor = requester
 
     -- Apply your domain effect.
     create MyHolding with ...
@@ -228,17 +232,35 @@ nonconsuming choice MyDomainClaim : ...
 
 `mpcResponseVerifyKey` is the uncompressed secp256k1 pubkey you derive off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"` (formula and tooling pointer in [Security checklist #4](#security-checklist-for-integrators)) and store at deployment time. The `daml-vault` package stores this value on `Vault.mpcResponseVerifyKey`.
 
-`SignBidirectionalEvent` has no custom consume choice by design. A generic consume choice would let an authorized party delete the request before the MPC service has responded. The recommended pattern is to keep `signEventCid` in the consumer's pending anchor and archive it only in the final claim/completion transaction, after the response evidence has been validated.
+`SignBidirectionalEvent` exposes a single delegated-archival choice,
+`Consume_SignBidirectional` (controller `actor`, who must be in `operators` or be
+`requester`). It exists because the event is co-signed by `sigNetworkFA`: a consumer's
+choice body never holds `sigNetworkFA`'s authority, so it cannot `archive` the event
+directly. The recommended pattern is to keep `signEventCid` in the consumer's pending
+anchor and call `Consume_SignBidirectional` only in the final claim/completion
+transaction, after the response evidence has been validated — exercising it earlier would
+delete a request the MPC has not yet answered (self-inflicted; only `operators`/`requester`
+can do it, and they forfeit the already-paid fee).
 
 ### Failure modes
 
-| Symptom                                                                                        | Meaning                                                                                                                                                                                                                                                                                       | Action                                                                                                                                                                       |
-| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RespondBidirectionalEvent` arrives but `abiHasErrorPrefix outcome.serializedOutput` is `True` | EVM tx reverted (or was replaced / dropped). The MPC still signs and publishes the outcome — payload is the 4-byte `0xdeadbeef` prefix followed by a 32-byte ABI-encoded `bool(true)` placeholder (no embedded EVM error data). The signature is valid; the prefix is the only revert signal. | Domain decision (refund, retry, surface error).                                                                                                                              |
-| `secp256k1WithEcdsaOnly` returns `False`                                                       | Signature does not match `responseHash` under your stored response-verification pubkey                                                                                                                                                                                                        | Reject the claim. Either the wrong pubkey is stored (e.g. someone stored the root by mistake — see Security checklist #4) or the response is forged. Escalate, do not retry. |
-| Only one of the two response events ever arrives                                               | The downstream-chain operation has not been submitted yet, or the destination chain has not confirmed it                                                                                                                                                                                      | Submit or resubmit the downstream-chain operation. There is no Canton-side timeout — add one in your consumer if you need it.                                                |
-| `Consume_*` exercised twice                                                                    | Second exercise fails because the contract is already archived                                                                                                                                                                                                                                | Idempotent at your level (your claim choice should archive the anchor first, so a duplicate claim won't reach `Consume_*`).                                                  |
-| Duplicate `SignBidirectionalEvent` with identical `requestId`                                  | Replay attempt                                                                                                                                                                                                                                                                                | Signing is RFC6979-deterministic, so duplicates produce identical signatures. Your single-use anchor prevents acting on it twice.                                            |
+| Symptom                                                                                        | Meaning                                                                                                                                                                                                                                                                                       | Action                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RespondBidirectionalEvent` arrives but `abiHasErrorPrefix outcome.serializedOutput` is `True` | EVM tx reverted (or was replaced / dropped). The MPC still signs and publishes the outcome — payload is the 4-byte `0xdeadbeef` prefix followed by a 32-byte ABI-encoded `bool(true)` placeholder (no embedded EVM error data). The signature is valid; the prefix is the only revert signal. | Domain decision (refund, retry, surface error).                                                                                                                                                                                                                               |
+| `secp256k1WithEcdsaOnly` returns `False`                                                       | Signature does not match `responseHash` under your stored response-verification pubkey                                                                                                                                                                                                        | Reject the claim. Either the wrong pubkey is stored (e.g. someone stored the root by mistake — see Security checklist #4) or the response is forged. Escalate, do not retry.                                                                                                  |
+| Only one of the two response events ever arrives                                               | The downstream-chain operation has not been submitted yet, or the destination chain has not confirmed it                                                                                                                                                                                      | Submit or resubmit the downstream-chain operation. There is no Canton-side timeout, and you **must not** add a wall-clock refund of optimistically-debited state — see [Recovering a stuck destination-chain transaction](#recovering-a-stuck-destination-chain-transaction). |
+| `Consume_*` exercised twice                                                                    | Second exercise fails because the contract is already archived                                                                                                                                                                                                                                | Idempotent at your level (your claim choice should archive the anchor first, so a duplicate claim won't reach `Consume_*`).                                                                                                                                                   |
+| Duplicate `SignBidirectionalEvent` with identical `requestId`                                  | Replay attempt                                                                                                                                                                                                                                                                                | Signing is RFC6979-deterministic, so duplicates produce identical signatures. Your single-use anchor prevents acting on it twice.                                                                                                                                             |
+
+### Recovering a stuck destination-chain transaction
+
+A consumer that debits Canton state before the destination-chain tx confirms (e.g. `daml-vault` archives the `Erc20Holding` in `RequestWithdrawal`) must respect one invariant:
+
+> **An externally-signed EVM transaction never expires** — it stays mineable while its nonce is unspent. Never refund optimistically-debited state on a timeout: the tx could land afterward and spend it twice.
+
+The only safe refund trigger is proof the tx can't execute — the signing account's nonce advancing past it via a _different_ confirmed tx. The MPC attests this automatically: it detects the superseded nonce and publishes a signed `0xdeadbeef` `RespondBidirectionalEvent` that your claim choice already verifies (`abiHasErrorPrefix`).
+
+To unstick, replace the transaction at the **same nonce, higher fee** (a replacement at `N+1` just stalls behind `N`). The address is MPC-controlled, so the replacement is an ordinary signing request — no "cancel" choice needed. In `daml-vault`: submit another withdrawal of any spare holding with `evmTxParams.nonce` set to the stuck nonce; once it mines, the MPC fails the original and `CompleteWithdrawal` recreates the `Erc20Holding`. (A holder whose sole holding is fully withdrawn must re-deposit or have an operator re-issue it — no funds are lost either way.)
 
 ### Security checklist for integrators
 
@@ -246,7 +268,7 @@ The Signer signs whatever bytes it is given and tracks no per-request state. Eve
 
 | #   | Must do                                                                                                                                                                                                                                                                                                                                                               | Why                                                                                                                                  |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | **Validate `txParams.calldata` before `SignBidirectional`** (ABI selector + argument checks).                                                                                                                                                                                                                                                                         | The Signer will sign anything.                                                                                                       |
+| 1   | **Validate `txParams.calldata` before `RequestSignature`** (ABI selector + argument checks).                                                                                                                                                                                                                                                                          | The Signer will sign anything.                                                                                                       |
 | 2   | **Use a single-use anchor for replay protection** (or a `requestId` nullifier set).                                                                                                                                                                                                                                                                                   | The Signer has no nonce, no nullifier set, no approval state.                                                                        |
 | 3   | **Namespace `path` per deployment** (e.g. `${vaultId},${requester},${userPath}`).                                                                                                                                                                                                                                                                                     | The Signer isolates operator sets only; two consumers sharing an operator set share the key namespace unless `path` says otherwise.  |
 | 4   | **Derive and store the response-verification pubkey at deployment time** on your equivalent of `Vault`: `derive_key(rootPub, derive_epsilon_canton(1, operatorsHash, "canton response key"))`, where the second argument is `sender = operatorsHash` and the third is the constant response path. **Do not store the root pubkey directly** — verification will fail. | What `secp256k1WithEcdsaOnly` is checked against. Re-fetching at claim time opens a TOCTOU window.                                   |
@@ -259,38 +281,40 @@ The Signer signs whatever bytes it is given and tracks no per-request state. Eve
 Replay-protection options (pick what fits your threat model):
 
 - A registry contract that records every used `requestId` (nullifier set).
-- Off-chain operator enforcement via a request-approve flow before the consumer ever creates the `SignRequest`.
+- Off-chain operator enforcement via a request-approve flow before the consumer ever calls `RequestSignature`.
 - Nothing — relying on the destination chain's nonce when a duplicate sign is harmless (signing is RFC6979-deterministic, so duplicates produce identical signatures and only one tx can land).
 
 For a complete worked consumer, see [`daml-vault/daml/Erc20Vault.daml`](../daml-vault/daml/Erc20Vault.daml).
 
 ## CC signature fee
 
-Every `Execute` — i.e. every `SignBidirectionalEvent` the MPC acts on — charges the requester a
-Canton Coin fee, paid requester → `feeReceiver` **atomically inside the same transaction**. If the
-fee cannot settle, `Execute` aborts and no event is created (fail-closed). Design:
-[`proposals/cc-signature-fee.md`](../../proposals/cc-signature-fee.md); operations:
-[`proposals/cc-signature-fee-runbook.md`](../../proposals/cc-signature-fee-runbook.md).
+Every `RequestSignature` (and therefore every Vault deposit/withdrawal request) charges the
+requester a Canton Coin fee, paid requester → `feeReceiver` **atomically inside the same
+transaction**. If the fee cannot settle, `RequestSignature` aborts and no event is created
+(fail-closed). Design:
+[`docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md`](../../docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md).
 
-- **Fee source.** A separate, mutable, sigNetwork-signed `SignerFeeConfig` holds the current
-  `feeAmount` (re-pegged off-ledger ~every 10 min). `Execute` reads it via the nonconsuming
-  `ReadFeeConfig` choice — not a raw `fetch` — because `Execute` runs under operators+requester
-  authority and a stakeholder-less fetch of the sigNetwork-only config would be unauthorized.
-- **Settlement.** The fee transfer is exercised on a token-standard `TransferFactory` (disclosed) and
-  must settle one-step via the receiver's `TransferPreapproval`. The factory, `AmuletRules`,
-  `OpenMiningRound`, the `SignerFeeConfig`, and the requester's holdings are attached as **disclosed
-  contracts** on the command — visible to the nested exercise.
-- **Anti-forgery preserved.** The requester's spend authority is already present inside `Execute`
-  (it is the transfer `sender` and the choice controller), so **no new authority is introduced**:
-  sigNetwork stays an observer-only non-signatory of `SignRequest` / `SignBidirectionalEvent`. It is
-  merely the payee.
-- **Client support.** `canton-sig` resolves the inputs before submission:
-  `getCurrentFeeDisclosure` (the live fee envelope), `getTransferFactoryForFee` (registry → factory +
-  disclosures), `selectInputHoldings` / `holdingInputsFromEvents` (cover the fee, ≤100 inputs), and
-  `assembleFeeChoiceArgs` / `collectFeeDisclosures` to build the choice args + disclosure list.
-
-`feeReceiver` is a field on `SignerFeeConfig` (= `sigNetwork` today; a dedicated `sigNetworkFA`
-featured-app party later) — the payee can move with no Daml change.
+- **Late-bound collector.** The Signer does not contain fee logic. It fetches the FA-signed
+  `FeeCollectorRegistration` (the trust anchor — only `sigNetworkFA` can create one, so a hostile
+  collector cannot be substituted), asserts it belongs to its own `sigNetworkFA`, and exercises
+  `FeeCollector_Charge` (from the frozen `signet-api-fee-v1` package) on the registered collector.
+  Interface exercises are late-bound: upgrading the implementation package changes live fee
+  behaviour with **zero rebuilds** of `daml-signer`, consumers, or clients.
+- **Implementation: `signet-fee-amulet`.** `CcFeeCollector` reads the FA-signed `FeePriceConfig`
+  (repriced ~every 10 min off-ledger by `fee-reprice.ts` running as `sigNetworkFA`; `feeAmount = 0.0`
+  waives the charge), resolves the CC `TransferFactory` from `feeExtraArgs.context`, and requires the
+  transfer to settle one-step via the receiver's `TransferPreapproval` — `Pending`/`Failed` abort.
+- **Fee admin = `sigNetworkFA`.** The registration, collector, and price config are all signed by
+  the featured-app party; a compromised `sigNetwork` (MPC identity) can neither forge requests nor
+  touch pricing, payee, or collector binding.
+- **Disclosures.** The FA fee endpoint serves `{registration, collector, priceConfig}` + an opaque
+  charge context (registry shape); the CC token registry serves the factory/`AmuletRules`/
+  `OpenMiningRound`. `canton-sig` assembles both: `getFeeCollectorContext`,
+  `getTransferFactoryForFee`, `selectInputHoldings` / `holdingInputsFromEvents`, then
+  `assembleFeeChoiceArgs` / `collectFeeDisclosures`.
+- **Upgrade wiring note.** `upgrades:` / `typecheck-upgrades:` for `daml-signer`, `daml-vault-poc`,
+  and `signet-fee-amulet` is added once this baseline is deployed — the current redeploy is the
+  breaking baseline (spec §10.3).
 
 # API Reference
 
@@ -298,32 +322,25 @@ featured-app party later) — the payee can move with no Daml change.
 
 ### `Signer`
 
-Singleton identity contract; disclosed off-chain.
+Singleton identity contract, **co-signed by `sigNetwork` (the MPC party) and `sigNetworkFA` (the featured-app provider party)**; disclosed off-chain. Created only via the `SignerProposal`/`AcceptSigner` ceremony (below), never with a bare `create`.
 
-- Signatory: `sigNetwork`
-- Fields: `sigNetwork : Party`
+- Signatory: `sigNetwork, sigNetworkFA`
+- Fields: `sigNetwork : Party`, `sigNetworkFA : Party`
 
-| Choice                 | Type         | Controller   | Args                                                                                                                               | Returns                                |
-| ---------------------- | ------------ | ------------ | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `SignBidirectional`    | nonconsuming | `requester`  | `signRequestCid : ContractId SignRequest`, `requester : Party`, + the four fee args (`feeConfigCid`, `transferFactoryCid`, `inputHoldingCids`, `transferContext`) forwarded to `Execute` | `ContractId SignBidirectionalEvent`    |
-| `Respond`              | nonconsuming | `sigNetwork` | `signEventCid : ContractId SignBidirectionalEvent`, `requestId : BytesHex`, `signature : Signature`                                | `ContractId SignatureRespondedEvent`   |
-| `RespondBidirectional` | nonconsuming | `sigNetwork` | `signEventCid : ContractId SignBidirectionalEvent`, `requestId : BytesHex`, `serializedOutput : BytesHex`, `signature : Signature` | `ContractId RespondBidirectionalEvent` |
+| Choice                 | Type         | Controller             | Args                                                                                                                               | Returns                                |
+| ---------------------- | ------------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `RequestSignature`     | nonconsuming | `operators, requester` | the request fields (table below) + the three fee args (`feeRegistrationCid`, `feeInputs`, `feeExtraArgs`)                          | `ContractId SignBidirectionalEvent`    |
+| `Respond`              | nonconsuming | `sigNetwork`           | `signEventCid : ContractId SignBidirectionalEvent`, `requestId : BytesHex`, `signature : Signature`                                | `ContractId SignatureRespondedEvent`   |
+| `RespondBidirectional` | nonconsuming | `sigNetwork`           | `signEventCid : ContractId SignBidirectionalEvent`, `requestId : BytesHex`, `serializedOutput : BytesHex`, `signature : Signature` | `ContractId RespondBidirectionalEvent` |
 
-### `SignRequest` (transient)
+`RequestSignature` charges the CC signature fee, derives `sender = computeOperatorsHash (map partyToText operators)` from the on-ledger operators, and creates the MPC-visible `SignBidirectionalEvent` (co-signed by `sigNetworkFA` ambiently, via the `Signer`) — all in one transaction. The fee is charged through the registered late-bound `FeeCollector` (the FA-signed `FeeCollectorRegistration` is validated first); if the charge aborts, `RequestSignature` aborts and no event is created (**fail-closed**). See [CC signature fee](#cc-signature-fee). It replaces the previous transient `SignRequest` + `SignBidirectional`/`Execute` step: `operators` co-authorize directly as choice controllers (a consumer supplies their authority by being `signatory operators`), so no intermediate authority-bridge contract is needed.
 
-Authority bridge from the consumer to the Signer. Created in the consumer body, consumed by `Execute` (called via `SignBidirectional`) in the same transaction.
-
-- Signatory: `operators, requester`
-- Observer: `sigNetwork`
-- Ensure: `not (null operators) && unique operators && validTxParams txParams`
-
-Fields:
+`RequestSignature` request fields (also the fields stamped onto `SignBidirectionalEvent`; note there is no `sigNetwork` arg — the `Signer` knows its own):
 
 | Field                         | Type       | Notes                                                                                                                                               |
 | ----------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `operators`                   | `[Party]`  | Operator multi-sig. Non-empty, unique. Sorted internally for hashing — caller order doesn't matter.                                                 |
 | `requester`                   | `Party`    | Initiator. Becomes co-signatory of `SignBidirectionalEvent`.                                                                                        |
-| `sigNetwork`                  | `Party`    | Must equal the `Signer`'s `sigNetwork`.                                                                                                             |
 | `txParams`                    | `TxParams` | Chain-agnostic transaction wrapper.                                                                                                                 |
 | `caip2Id`                     | `Text`     | **Destination** chain CAIP-2 id, e.g. `"eip155:1"` (mainnet) or `"eip155:11155111"` (Sepolia). Build via `chainIdToDecimalText` from `daml-eip712`. |
 | `keyVersion`                  | `Int`      | KDF version. Use `1` (the latest supported).                                                                                                        |
@@ -334,62 +351,61 @@ Fields:
 | `outputDeserializationSchema` | `Text`     | JSON ABI fragment, e.g. `[{"name":"","type":"bool"}]`. Tells the MPC how to ABI-encode the simulated return value into `serializedOutput`.          |
 | `respondSerializationSchema`  | `Text`     | Schema describing how the response is signed. Same value as `outputDeserializationSchema` in current usage.                                         |
 
-| Choice    | Type      | Controller  | Args                                                                                                           | Returns                             |
-| --------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| `Execute` | consuming | `requester` | `feeConfigCid : ContractId SignerFeeConfig`, `transferFactoryCid : ContractId TransferFactory`, `inputHoldingCids : [ContractId Holding]`, `transferContext : ChoiceContext` | `ContractId SignBidirectionalEvent` |
+### `SignerProposal`
 
-`Execute` charges the CC signature fee, then derives `sender = computeOperatorsHash (map partyToText operators)` from the on-ledger signatory list and creates the event. The fee transfer (requester → `feeReceiver`) is exercised on the disclosed `TransferFactory` and must settle one-step via the receiver's `TransferPreapproval`; if it does not, `Execute` aborts and no event is created (**fail-closed**). See [CC signature fee](#cc-signature-fee).
+Two-party creation ceremony for the co-signed `Signer`. `sigNetwork` proposes; `sigNetworkFA` accepts, and only then does the `Signer` exist — so the featured-app party's consent is mandatory before any signing infra is live.
 
-### `SignerFeeConfig`
+- Signatory: `sigNetwork`
+- Observer: `sigNetworkFA`
+- Fields: `sigNetwork : Party`, `sigNetworkFA : Party`
 
-The current CC signature fee. Mutable and sigNetwork-signed, kept separate from the immutable `Signer` so it can be repriced (~every 10 min) without churning the singleton. No token-standard build dependency — it holds the instrument as plain `(admin, id)` fields, and `Execute` builds the `InstrumentId` from them.
+| Choice         | Type      | Controller     | Args | Returns             |
+| -------------- | --------- | -------------- | ---- | ------------------- |
+| `AcceptSigner` | consuming | `sigNetworkFA` | —    | `ContractId Signer` |
 
-- Signatory: `sigNetwork` (so a requester cannot forge a cheaper config)
-- Observer: `feeReceiver`
-- Ensure: `feeAmount >= 0.0 && validUntil > validFrom`
+### Fee packages
 
-| Field             | Type      | Notes                                                                          |
-| ----------------- | --------- | ------------------------------------------------------------------------------ |
-| `sigNetwork`      | `Party`   | Identity binding — which `Signer` this fee applies to. `Execute` asserts it matches the request's `sigNetwork`. |
-| `feeReceiver`     | `Party`   | Payee + preapproval provider + featured-app party (`sigNetwork` today, `sigNetworkFA` later). |
-| `instrumentAdmin` | `Party`   | Amulet/DSO admin party of the CC `InstrumentId`.                               |
-| `instrumentId`    | `Text`    | CC instrument id (`"Amulet"`).                                                  |
-| `feeAmount`       | `Decimal` | Current CC fee; re-pegged off-ledger.                                          |
-| `validFrom`       | `Time`    | Window start (pre-publish next config with overlap).                           |
-| `validUntil`      | `Time`    | Window end; `Execute` rejects an expired config (anti-replay).                 |
-| `version`         | `Int`     | Monotonic; audit/observability.                                                |
+The fee surface lives outside `daml-signer`:
 
-| Choice          | Type         | Controller   | Args                                                          | Returns                          |
-| --------------- | ------------ | ------------ | ------------------------------------------------------------ | -------------------------------- |
-| `UpdateFee`     | consuming    | `sigNetwork` | `newAmount : Decimal`, `newValidFrom : Time`, `newValidUntil : Time` | `ContractId SignerFeeConfig` |
-| `ReadFeeConfig` | nonconsuming | `reader : Party` | `reader : Party`                                         | `SignerFeeConfig`                |
+| Package             | Contents                                                                    | Stability                                        |
+| ------------------- | --------------------------------------------------------------------------- | ------------------------------------------------ |
+| `signet-api-fee-v1` | `FeeCollector` interface, `FeeCollector_Charge`, `FeeCollectorRegistration` | frozen forever (breaking change ⇒ `-v2` package) |
+| `signet-fee-amulet` | `CcFeeCollector` (charge logic), `FeePriceConfig` (rotating price)          | evolves freely via SCU or replacement            |
 
-`ReadFeeConfig` is the authority-free read `Execute` uses (a raw `fetch` of this sigNetwork-only contract would be unauthorized under operators+requester authority). `UpdateFee` reprices by archive + recreate, rotating the contract id — which is why clients fetch the current disclosure at submit time rather than hardcoding a cid.
+`RequestSignature` only ever sees the frozen API: it validates the registration and exercises
+`FeeCollector_Charge`. Everything else (pricing, settlement policy, the token-standard dependency)
+is the implementation package's business.
 
 ### `SignBidirectionalEvent`
 
-Created by `SignRequest.Execute`. **What the MPC watches.** Has no custom choices. Consumers should archive it directly from their final claim/completion choice after both MPC response contracts have been validated and consumed.
+Created by `Signer.RequestSignature`. **What the MPC watches.** Co-signed by `sigNetworkFA` (the CIP-0104 confirmer). Consumers retire it from their final claim/completion choice — via `Consume_SignBidirectional`, not a bare `archive` — after both MPC response contracts have been validated and consumed.
 
-- Signatory: `operators, requester`
+- Signatory: `operators, requester, sigNetworkFA`
 - Observer: `sigNetwork`
 - Ensure: `not (null operators) && unique operators && sender == computeOperatorsHash (map partyToText operators) && validTxParams txParams`
 
-Fields: same as `SignRequest` plus `sender : BytesHex` (= `operatorsHash`, set by `Execute`).
+Fields: the `RequestSignature` request fields (table above) plus `sigNetworkFA : Party` and `sender : BytesHex` (= `operatorsHash`, set by `RequestSignature`).
+
+| Choice                      | Type      | Controller                                                 | Args            |
+| --------------------------- | --------- | ---------------------------------------------------------- | --------------- |
+| `Consume_SignBidirectional` | consuming | `actor : Party` (must be in `operators` or be `requester`) | `actor : Party` |
+
+`Consume_SignBidirectional` exists because `sigNetworkFA` is a signatory: a consumer's choice body cannot `archive` the event directly (it lacks `sigNetworkFA`'s authority), so `sigNetworkFA` pre-consents to this delegated archival. Only `operators`/`requester` may exercise it.
 
 ### `SignatureRespondedEvent`
 
 Request-signature evidence. Created by `Signer.Respond`. Signed by the request child key derived from the root with `sender = operatorsHash` and the request `path`; used by the consumer according to its downstream-chain submission flow. See [Integrator lifecycle § 2](#2-the-mpc-service-responds-off-canton-asynchronous) for the full key/usage table.
 
-- Signatory: `sigNetwork`
+- Signatory: `sigNetwork, sigNetworkFA`
 - Observer: `operators, requester`
 - Ensure: `isBytesN 32 requestId && validSignature signature`
 
-| Field                                  | Type                  |
-| -------------------------------------- | --------------------- |
-| `sigNetwork`, `requester`, `responder` | `Party`               |
-| `operators`                            | `[Party]`             |
-| `requestId`                            | `BytesHex` (32 bytes) |
-| `signature`                            | `Signature`           |
+| Field                                                  | Type                  |
+| ------------------------------------------------------ | --------------------- |
+| `sigNetwork`, `sigNetworkFA`, `requester`, `responder` | `Party`               |
+| `operators`                                            | `[Party]`             |
+| `requestId`                                            | `BytesHex` (32 bytes) |
+| `signature`                                            | `Signature`           |
 
 | Choice                       | Type      | Controller                                                 | Args            |
 | ---------------------------- | --------- | ---------------------------------------------------------- | --------------- |
@@ -399,17 +415,17 @@ Request-signature evidence. Created by `Signer.Respond`. Signed by the request c
 
 Outcome signature evidence. Signed by the response-verification child key derived from the root with `sender = operatorsHash` and `path = "canton response key"` over `responseHash = keccak256(requestId ‖ serializedOutput)`. The consumer verifies it on-ledger with `secp256k1WithEcdsaOnly` against the response-verification pubkey it stored at deployment. `serializedOutput` is ABI-encoded return data on success, or `0xdeadbeef`+payload on failure (predicate `abiHasErrorPrefix` in `daml-abi`).
 
-- Signatory: `sigNetwork`
+- Signatory: `sigNetwork, sigNetworkFA`
 - Observer: `operators, requester`
 - Ensure: `isBytesN 32 requestId && isCanonicalHex serializedOutput && validSignature signature`
 
-| Field                                  | Type                  |
-| -------------------------------------- | --------------------- |
-| `sigNetwork`, `requester`, `responder` | `Party`               |
-| `operators`                            | `[Party]`             |
-| `requestId`                            | `BytesHex` (32 bytes) |
-| `serializedOutput`                     | `BytesHex`            |
-| `signature`                            | `Signature`           |
+| Field                                                  | Type                  |
+| ------------------------------------------------------ | --------------------- |
+| `sigNetwork`, `sigNetworkFA`, `requester`, `responder` | `Party`               |
+| `operators`                                            | `[Party]`             |
+| `requestId`                                            | `BytesHex` (32 bytes) |
+| `serializedOutput`                                     | `BytesHex`            |
+| `signature`                                            | `Signature`           |
 
 | Choice                         | Type      | Controller                                                 | Args            |
 | ------------------------------ | --------- | ---------------------------------------------------------- | --------------- |
@@ -493,7 +509,7 @@ DER because `secp256k1WithEcdsaOnly` requires DER. Union for future EdDSA / Schn
 
 ```
 requestId = keccak256(
-    eip712EncodeString  sender                    -- = operatorsHash, set by Execute
+    eip712EncodeString  sender                    -- = operatorsHash, set by RequestSignature
   ‖ hashTxParams        txParams
   ‖ eip712EncodeString  caip2Id
   ‖ eip712EncodeUint256 (toHex keyVersion)

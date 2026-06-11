@@ -541,7 +541,9 @@ export class CantonClient {
     includeCreatedEventBlob = false,
   ): Promise<CreatedEvent[]> {
     const entries = await this.queryActiveContracts(parties, {
-      InterfaceFilter: { value: { interfaceId, includeInterfaceView: true, includeCreatedEventBlob } },
+      InterfaceFilter: {
+        value: { interfaceId, includeInterfaceView: true, includeCreatedEventBlob },
+      },
     });
     return entries.map((e) => e.createdEvent);
   }

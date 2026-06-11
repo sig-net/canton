@@ -1,0 +1,153 @@
+-- | Canton Coin fee-collector implementation package. Owns everything expected
+-- to change about the fee (settlement policy, token-standard integration,
+-- pricing plumbing) — including the splice transfer-instruction dependency —
+-- and evolves by SCU or replacement with ZERO rebuilds of `signet-api-fee-v1`,
+-- `daml-signer`, `daml-vault`, or clients: `FeeCollector_Charge` is dispatched
+-- late-bound at runtime. Design:
+-- docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md §5.2.
+module Signet.Fee.Amulet where
+
+import qualified DA.TextMap as TextMap
+import DA.Time (hours, addRelTime)
+
+import Splice.Api.Token.HoldingV1 (InstrumentId(..))
+import Splice.Api.Token.MetadataV1
+  ( AnyContractId, AnyValue(..), ChoiceContext(..), ExtraArgs(..), Metadata, emptyMetadata )
+import Splice.Api.Token.TransferInstructionV1
+  ( TransferFactory, TransferFactory_Transfer(..), Transfer(..)
+  , TransferInstructionResult_Output(..)
+  )
+import Signet.Api.Fee.V1
+
+-- | A price config is chargeable for a given Signer iff it is signed by the
+-- same sigNetworkFA and the ledger time is inside its validity window. Pure so
+-- it is unit-testable without a ledger.
+validatePriceConfig : Party -> Time -> FeePriceConfig -> Either Text ()
+validatePriceConfig expectedSigNetworkFA now cfg
+  | cfg.sigNetworkFA /= expectedSigNetworkFA = Left "Fee price config belongs to a different sigNetworkFA"
+  | now < cfg.validFrom = Left "Fee price config not yet valid"
+  | now > cfg.validUntil = Left "Fee price config expired"
+  | otherwise = Right ()
+
+-- | Successor of the Signer package's former built-in fee config, now
+-- implementation-internal and FA-owned. Repriced ~every 10 min (≈ one OpenMiningRound cycle)
+-- by the off-ledger `fee-reprice.ts` automation running as `sigNetworkFA`.
+-- Referenced at charge time via `extraArgs.context` (`priceConfigContextKey`)
+-- and attached as a disclosure by the FA fee endpoint.
+template FeePriceConfig
+  with
+    sigNetworkFA    : Party    -- fee admin + identity binding: must equal the Signer's sigNetworkFA
+    feeReceiver     : Party    -- who is paid; re-stamped on every roll
+    instrumentAdmin : Party    -- Amulet/DSO admin party of the CC InstrumentId
+    instrumentId    : Text     -- the CC instrument id ("Amulet")
+    feeAmount       : Decimal  -- current CC fee; 0.0 = waived (Charge skips the transfer)
+    validFrom       : Time     -- window start (pre-publish the next config with overlap)
+    validUntil      : Time     -- window end; Charge rejects an expired config
+    version         : Int      -- monotonic; audit/observability
+    meta            : Metadata -- extension room: new data = new keys, never new fields
+  where
+    -- only sigNetworkFA can set the fee -> neither a requester nor a compromised
+    -- sigNetwork (MPC identity) can forge a cheaper or different-payee config
+    signatory sigNetworkFA
+    observer feeReceiver
+    ensure feeAmount >= 0.0 && validUntil > validFrom
+
+    -- Reprice: archive + recreate with a new amount, payee, and validity window.
+    -- The contract id rotates, so clients fetch the current disclosure at submit
+    -- time rather than hardcoding it.
+    choice UpdateFee : ContractId FeePriceConfig
+      with
+        newAmount      : Decimal
+        newFeeReceiver : Party
+        newValidFrom   : Time
+        newValidUntil  : Time
+      controller sigNetworkFA
+      do
+        create this with
+          feeAmount = newAmount
+          feeReceiver = newFeeReceiver
+          validFrom = newValidFrom
+          validUntil = newValidUntil
+          version = version + 1
+
+-- ---------------------------------------------------------------------------
+-- Charge context keys (implementation-internal)
+--
+-- Per the token-standard rule, these keys are internal to this implementation,
+-- its FA-operated fee endpoint, and canton-sig's `assembleFeeChoiceArgs`;
+-- third-party code must treat the context as opaque. They may change freely
+-- together with the endpoint.
+-- ---------------------------------------------------------------------------
+
+-- | Context key carrying the `FeePriceConfig` to charge against (`AV_ContractId`).
+priceConfigContextKey : Text
+priceConfigContextKey = "signet.network/fee/price-config"
+
+-- | Context key carrying the CC `TransferFactory` to settle through (`AV_ContractId`).
+transferFactoryContextKey : Text
+transferFactoryContextKey = "signet.network/fee/transfer-factory"
+
+-- | Read an `AV_ContractId` context value.
+lookupContextCid : Text -> ChoiceContext -> Optional AnyContractId
+lookupContextCid key ctx = case TextMap.lookup key ctx.values of
+  Some (AV_ContractId cid) -> Some cid
+  _ -> None
+
+-- | Long-lived collector singleton (`FeeCollector_Charge` is nonconsuming).
+-- Compatible logic changes ship as an SCU of this package and take effect on
+-- the LIVE contract via late binding; incompatible redesigns ship as a new
+-- template + a fresh collector + a rotated `FeeCollectorRegistration`.
+-- `feeReceiver` here is informational (view display) — the authoritative payee
+-- is the price config's at charge time.
+template CcFeeCollector
+  with
+    sigNetworkFA : Party
+    feeReceiver  : Party
+    meta         : Metadata
+  where
+    signatory sigNetworkFA
+
+    interface instance FeeCollector for CcFeeCollector where
+      view = FeeCollectorView with sigNetworkFA; feeReceiver; meta
+
+      feeCollector_chargeImpl _self arg = do
+        now <- getTime
+        priceCfgAnyCid <- case lookupContextCid priceConfigContextKey arg.extraArgs.context of
+          Some cid -> pure cid
+          None -> abort ("Fee charge context is missing " <> priceConfigContextKey)
+        -- plain fetch: this collector's sigNetworkFA signatory is ambient in the
+        -- Charge subtree, and the price config is signed by the same party
+        let priceCfgCid : ContractId FeePriceConfig = coerceContractId priceCfgAnyCid
+        priceCfg <- fetch priceCfgCid
+        case validatePriceConfig sigNetworkFA now priceCfg of
+          Left err -> abort err
+          Right () -> pure ()
+
+        if priceCfg.feeAmount == 0.0
+          then -- zero-fee waiver: "free mode" is a config flip, no transfer exercised
+            pure FeeCollector_ChargeResult with amountCharged = 0.0; meta = emptyMetadata
+          else do
+            factoryAnyCid <- case lookupContextCid transferFactoryContextKey arg.extraArgs.context of
+              Some cid -> pure cid
+              None -> abort ("Fee charge context is missing " <> transferFactoryContextKey)
+            let factoryCid : ContractId TransferFactory = coerceContractId factoryAnyCid
+            result <- exercise factoryCid TransferFactory_Transfer with
+              expectedAdmin = priceCfg.instrumentAdmin
+              transfer = Transfer with
+                sender = arg.payer
+                receiver = priceCfg.feeReceiver
+                amount = priceCfg.feeAmount
+                instrumentId = InstrumentId with admin = priceCfg.instrumentAdmin; id = priceCfg.instrumentId
+                requestedAt = now
+                executeBefore = addRelTime now (hours 1)
+                inputHoldingCids = arg.inputs
+                meta = emptyMetadata
+              -- pass the merged context through: the registry's own keys ride
+              -- along (factory implementations look up only their own keys)
+              extraArgs = ExtraArgs with context = arg.extraArgs.context; meta = arg.extraArgs.meta
+            case result.output of
+              TransferInstructionResult_Completed _ -> pure ()
+              TransferInstructionResult_Pending _ ->
+                abort "Fee transfer did not settle one-step; receiver TransferPreapproval required"
+              TransferInstructionResult_Failed -> abort "Fee transfer failed"
+            pure FeeCollector_ChargeResult with amountCharged = priceCfg.feeAmount; meta = emptyMetadata

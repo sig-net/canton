@@ -1,0 +1,28 @@
+module TestFeeCollector where
+
+-- Test-only FeeCollector implementation for the daml-signer + daml-vault
+-- suites: the Signer only needs "a registered collector whose Charge succeeds
+-- or aborts" — the real CC settlement logic is tested in
+-- signet-fee-amulet-tests against CcFeeCollector.
+
+import Splice.Api.Token.MetadataV1 (ExtraArgs(..), emptyChoiceContext, emptyMetadata)
+import Signet.Api.Fee.V1
+
+-- | Empty fee extras for tests: MockFeeCollector reads nothing from context.
+noFeeExtras : ExtraArgs
+noFeeExtras = ExtraArgs with context = emptyChoiceContext; meta = emptyMetadata
+
+template MockFeeCollector
+  with
+    sigNetworkFA   : Party
+    chargeSucceeds : Bool     -- False simulates any failed charge (fail-closed path)
+    chargedAmount  : Decimal  -- echoed in the result on success
+  where
+    signatory sigNetworkFA
+
+    interface instance FeeCollector for MockFeeCollector where
+      view = FeeCollectorView with sigNetworkFA; feeReceiver = sigNetworkFA; meta = emptyMetadata
+      feeCollector_chargeImpl _self _arg =
+        if chargeSucceeds
+          then pure FeeCollector_ChargeResult with amountCharged = chargedAmount; meta = emptyMetadata
+          else abort "MockFeeCollector: charge rejected"

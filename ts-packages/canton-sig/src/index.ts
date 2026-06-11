@@ -35,9 +35,9 @@ export {
 export {
   selectInputHoldings,
   holdingInputsFromEvents,
-  parseFeeConfig,
-  isFeeConfigInWindow,
-  getCurrentFeeDisclosure,
+  parsePriceConfig,
+  isPriceConfigInWindow,
+  getFeeCollectorContext,
   getTransferFactoryForFee,
   assembleFeeChoiceArgs,
   collectFeeDisclosures,
@@ -45,20 +45,37 @@ export {
   MAX_TRANSFER_INPUTS,
   TRANSFER_FACTORY_REGISTRY_PATH,
   HOLDING_INTERFACE_ID,
+  PRICE_CONFIG_CONTEXT_KEY,
+  TRANSFER_FACTORY_CONTEXT_KEY,
+  FEE_COLLECTOR_ENDPOINT_PATH,
   EMPTY_TRANSFER_CONTEXT,
 } from "./fee.js";
 export type {
   HoldingInput,
   HoldingSelection,
   FeeLedgerReader,
-  CurrentFeeDisclosure,
+  FeeCollectorContext,
   FeeTransferDetails,
   ResolvedTransferFactory,
   TransferChoiceContext,
+  FeeExtraArgs,
   FeeChoiceArgs,
 } from "./fee.js";
 export { computeFeeCc } from "./fee-pricing.js";
 export type { FeePricingInputs, FeePricingResult } from "./fee-pricing.js";
+export {
+  repriceWindow,
+  findLatestPriceConfig,
+  repriceOnce,
+  runRepriceLoop,
+} from "./fee-reprice.js";
+export type {
+  MarketInputs,
+  RepriceConfig,
+  RepriceResult,
+  RepriceLoopOptions,
+  FeeRepriceClient,
+} from "./fee-reprice.js";
 
 // EVM transaction building
 export {
@@ -77,10 +94,10 @@ export { cantonHexToHex, toCantonHex } from "./evm/hex.js";
 // Daml template types (re-exported for consumer convenience)
 export {
   Signer,
+  SignerProposal,
   SignBidirectionalEvent,
   SignatureRespondedEvent,
   RespondBidirectionalEvent,
-  SignRequest,
 } from "@daml.js/daml-signer-0.0.1/lib/Signer/module";
 
 export {

@@ -2,18 +2,21 @@
  * CC signature-fee client support.
  *
  * Before a deposit/withdrawal can be submitted, the requester must assemble the
- * inputs that `SignRequest.Execute` charges the CC fee with (see
- * `proposals/cc-signature-fee.md` §5 + §8):
+ * inputs that `Signer.RequestSignature` charges the CC fee with (see
+ * `docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md` §5.5):
  *
- * 1. {@link getCurrentFeeDisclosure} — read the current `SignerFeeConfig` (the
- *    sigNetwork-only fee contract) from sigNetwork's fee-disclosure endpoint.
+ * 1. {@link getFeeCollectorContext} — read the active `FeeCollectorRegistration`
+ *    (the sigNetworkFA-signed trust anchor; the featured-app party administers
+ *    fees), its registered collector, and the current `FeePriceConfig` from the
+ *    FA fee endpoint.
  * 2. {@link getTransferFactoryForFee} — resolve the CC `TransferFactory` and its
  *    disclosures (`AmuletRules`, `OpenMiningRound`, the factory) from the
  *    token-standard registry.
  * 3. {@link selectInputHoldings} — pick the requester's Amulet `Holding`s that
  *    cover `feeAmount`, within the token-standard input cap.
- * 4. {@link assembleFeeChoiceArgs} — fold the three into the `Execute` choice
- *    arguments; the caller attaches the collected disclosures to the submission.
+ * 4. {@link assembleFeeChoiceArgs} — fold the three into the
+ *    `{feeRegistrationCid, feeInputs, feeExtraArgs}` choice arguments; the
+ *    caller attaches the collected disclosures to the submission.
  *
  * The pure pieces (selection, window check, choice-arg assembly) are exercised
  * by the oracle suite; the two IO helpers take injectable transports so their
@@ -26,7 +29,11 @@
 
 import { parseUnits, formatUnits } from "viem";
 
-import { SignerFeeConfig } from "@daml.js/daml-signer-0.0.1/lib/SignerFee/module.js";
+import {
+  FeePriceConfig,
+  CcFeeCollector,
+} from "@daml.js/signet-fee-amulet-0.0.1/lib/Signet/Fee/Amulet/module.js";
+import { FeeCollectorRegistration } from "@daml.js/signet-api-fee-v1-1.0.0/lib/Signet/Api/Fee/V1/module.js";
 import type { CreatedEvent, DisclosedContract } from "./infra/canton-client.js";
 
 /** Daml `Decimal` is `Numeric 10`; Canton Coin (Amulet) amounts use scale 10. */
@@ -40,8 +47,19 @@ export const CC_DECIMALS = 10;
 export const MAX_TRANSFER_INPUTS = 100;
 
 /** Token-standard transfer-factory registry path (Splice CIP-0056). */
-export const TRANSFER_FACTORY_REGISTRY_PATH =
-  "/registry/transfer-instruction/v1/transfer-factory";
+export const TRANSFER_FACTORY_REGISTRY_PATH = "/registry/transfer-instruction/v1/transfer-factory";
+
+/**
+ * Charge-context keys, internal to the `signet-fee-amulet` implementation and
+ * this assembly helper (mirrors `Signet.Fee.Amulet.priceConfigContextKey` /
+ * `transferFactoryContextKey`). Third-party code must treat the context as
+ * opaque.
+ */
+export const PRICE_CONFIG_CONTEXT_KEY = "signet.network/fee/price-config";
+export const TRANSFER_FACTORY_CONTEXT_KEY = "signet.network/fee/transfer-factory";
+
+/** FA fee-endpoint path serving the collector context (registry-shaped). */
+export const FEE_COLLECTOR_ENDPOINT_PATH = "/fee/v1/collector";
 
 /** Token-standard `Holding` interface id (package-name ref) for interface queries. */
 export const HOLDING_INTERFACE_ID =
@@ -51,7 +69,7 @@ export const HOLDING_INTERFACE_ID =
  * Token-standard `ChoiceContext` (`Splice.Api.Token.MetadataV1`) as it travels
  * over the JSON Ledger API: a `TextMap` of opaque values. The client never
  * builds one — it forwards the `choiceContextData` the registry returns into the
- * `Execute` choice's `transferContext` argument. `{ values: {} }` is the empty
+ * `RequestSignature` `transferContext` argument. `{ values: {} }` is the empty
  * context (matches `emptyChoiceContext`).
  */
 export type TransferChoiceContext = { values: Record<string, unknown> };
@@ -129,7 +147,7 @@ export interface HoldingSelection {
  * Greedy largest-first, so the fewest inputs are used (keeping under the
  * {@link MAX_TRANSFER_INPUTS} cap). Locked and non-positive holdings are
  * ignored. Fail-closed: throws if the unlocked balance cannot cover the fee, or
- * if covering it would exceed the input cap — mirroring how `Execute` would
+ * if covering it would exceed the input cap — mirroring how `RequestSignature` would
  * abort, but surfaced client-side before submission.
  *
  * @param holdings - Candidate holdings (typically the requester's Amulet ACS).
@@ -179,22 +197,22 @@ export function selectInputHoldings(
 }
 
 // ---------------------------------------------------------------------------
-// Fee-config disclosure (sigNetwork-only contract, served by sigNetwork)
+// Fee-collector context (sigNetworkFA-signed contracts, served by the fee admin)
 // ---------------------------------------------------------------------------
 
 /**
- * Decode a `SignerFeeConfig` createArgument using the generated Daml decoder
+ * Decode a `FeePriceConfig` createArgument using the generated Daml decoder
  * (the source-of-truth schema), throwing on any shape mismatch.
  */
-export function parseFeeConfig(createArgument: unknown): SignerFeeConfig {
-  return SignerFeeConfig.decoder.runWithException(createArgument);
+export function parsePriceConfig(createArgument: unknown): FeePriceConfig {
+  return FeePriceConfig.decoder.runWithException(createArgument);
 }
 
 /**
  * Whether `cfg`'s `[validFrom, validUntil]` window contains `nowMs`
  * (inclusive). `nowMs` is injected so the check is deterministic.
  */
-export function isFeeConfigInWindow(cfg: SignerFeeConfig, nowMs: number): boolean {
+export function isPriceConfigInWindow(cfg: FeePriceConfig, nowMs: number): boolean {
   return nowMs >= Date.parse(cfg.validFrom) && nowMs <= Date.parse(cfg.validUntil);
 }
 
@@ -215,59 +233,108 @@ export interface FeeLedgerReader {
   ): Promise<DisclosedContract>;
 }
 
-/** The current fee config plus the disclosure payload to attach to a submission. */
-export interface CurrentFeeDisclosure {
-  /** Decoded `SignerFeeConfig` payload (`feeAmount`, `feeReceiver`, instrument…). */
-  config: SignerFeeConfig;
-  /** Contract id of the chosen `SignerFeeConfig` (the `feeConfigCid` choice arg). */
-  contractId: string;
-  /** Disclosure payload for command submission. */
-  disclosure: DisclosedContract;
+/** The fee-collector context the FA fee endpoint serves (registry-shaped). */
+export interface FeeCollectorContext {
+  /** Contract id of the active `FeeCollectorRegistration` (the `feeRegistrationCid` choice arg). */
+  registrationCid: string;
+  /** Contract id of the registered collector (interface cid; disclosed, not passed as an arg). */
+  collectorCid: string;
+  /** Contract id of the current `FeePriceConfig` (referenced via the charge context). */
+  priceConfigCid: string;
+  /** Decoded current price config (`feeAmount` drives holding selection). */
+  priceConfig: FeePriceConfig;
+  /** Implementation-internal charge context (price-config ref today); opaque to clients. */
+  choiceContextData: TransferChoiceContext;
+  /** Disclosures for the submission: registration, collector, price config. */
+  disclosedContracts: DisclosedContract[];
 }
 
 /**
- * Resolve the current `SignerFeeConfig` disclosure, as sigNetwork's
- * fee-disclosure endpoint does (§6.4). `SignerFeeConfig` is sigNetwork-only, so
- * the requester cannot read it from its own ACS — this runs under sigNetwork's
- * read authority and hands the requester the live envelope.
+ * Build the fee-collector context, as the FA-operated fee endpoint does for
+ * `POST {FEE_COLLECTOR_ENDPOINT_PATH}`. The registration, collector, and price
+ * config are all signed by `sigNetworkFA` (the fee admin), so this runs under
+ * the fee admin's read authority and hands the requester the live envelope.
  *
- * Of the active configs for `sigNetwork`, picks the in-window one; if windows
- * overlap (a pre-published next config), the highest `version` wins.
+ * Of the active price configs for `sigNetworkFA`, picks the in-window one; if
+ * windows overlap (a pre-published next config), the highest `version` wins.
+ * Exactly one registration must be active — rotation must archive the old one.
  *
- * @param reader - A {@link CantonClient} (or stub) reading as sigNetwork.
- * @param sigNetwork - The sigNetwork party whose fee config to serve.
+ * @param reader - A {@link CantonClient} (or stub) reading as the fee admin.
+ * @param sigNetworkFA - The featured-app party whose fee infra to serve.
  * @param opts.nowMs - Override "now" for the window check (defaults to `Date.now()`).
- * @param opts.templateId - Override the `SignerFeeConfig` template id.
- * @throws If no in-window config exists for `sigNetwork`.
+ * @param opts.registrationTemplateId - Override the registration template id.
+ * @param opts.priceConfigTemplateId - Override the price-config template id.
+ * @param opts.collectorTemplateId - Template id used to disclose the collector
+ *   contract (defaults to the current `CcFeeCollector`; the endpoint knows its
+ *   own implementation).
+ * @throws If no (or multiple) registrations exist, or no in-window price config.
  */
-export async function getCurrentFeeDisclosure(
+export async function getFeeCollectorContext(
   reader: FeeLedgerReader,
-  sigNetwork: string,
-  opts: { nowMs?: number; templateId?: string } = {},
-): Promise<CurrentFeeDisclosure> {
-  const templateId = opts.templateId ?? SignerFeeConfig.templateId;
+  sigNetworkFA: string,
+  opts: {
+    nowMs?: number;
+    registrationTemplateId?: string;
+    priceConfigTemplateId?: string;
+    collectorTemplateId?: string;
+  } = {},
+): Promise<FeeCollectorContext> {
   const nowMs = opts.nowMs ?? Date.now();
+  const registrationTemplateId = opts.registrationTemplateId ?? FeeCollectorRegistration.templateId;
+  const priceConfigTemplateId = opts.priceConfigTemplateId ?? FeePriceConfig.templateId;
+  const collectorTemplateId = opts.collectorTemplateId ?? CcFeeCollector.templateId;
 
-  const events = await reader.getActiveContracts([sigNetwork], templateId, true);
-  const candidates = events
-    .map((ev) => ({ ev, config: parseFeeConfig(ev.createArgument) }))
-    .filter(({ config }) => config.sigNetwork === sigNetwork)
-    .filter(({ config }) => isFeeConfigInWindow(config, nowMs))
+  const registrations = (
+    await reader.getActiveContracts([sigNetworkFA], registrationTemplateId, false)
+  )
+    .map((ev) => ({
+      ev,
+      reg: FeeCollectorRegistration.decoder.runWithException(ev.createArgument),
+    }))
+    .filter(({ reg }) => reg.sigNetworkFA === sigNetworkFA);
+  if (registrations.length === 0) {
+    throw new Error(`getFeeCollectorContext: no FeeCollectorRegistration for ${sigNetworkFA}`);
+  }
+  if (registrations.length > 1) {
+    throw new Error(
+      `getFeeCollectorContext: multiple active FeeCollectorRegistration contracts for ` +
+        `${sigNetworkFA} — rotation must archive the stale one`,
+    );
+  }
+  const registration = registrations[0]!;
+
+  const configs = (await reader.getActiveContracts([sigNetworkFA], priceConfigTemplateId, false))
+    .map((ev) => ({ ev, config: parsePriceConfig(ev.createArgument) }))
+    .filter(({ config }) => config.sigNetworkFA === sigNetworkFA)
+    .filter(({ config }) => isPriceConfigInWindow(config, nowMs))
     .sort((a, b) => (BigInt(a.config.version) < BigInt(b.config.version) ? 1 : -1));
-
-  const chosen = candidates[0];
+  const chosen = configs[0];
   if (!chosen) {
     throw new Error(
-      `getCurrentFeeDisclosure: no in-window SignerFeeConfig for ${sigNetwork} ` +
+      `getFeeCollectorContext: no in-window FeePriceConfig for ${sigNetworkFA} ` +
         `at ${new Date(nowMs).toISOString()}`,
     );
   }
-  const disclosure = await reader.getDisclosedContract(
-    [sigNetwork],
-    templateId,
-    chosen.ev.contractId,
-  );
-  return { config: chosen.config, contractId: chosen.ev.contractId, disclosure };
+
+  const collectorCid = registration.reg.collector;
+  const [dRegistration, dCollector, dPriceConfig] = await Promise.all([
+    reader.getDisclosedContract([sigNetworkFA], registrationTemplateId, registration.ev.contractId),
+    reader.getDisclosedContract([sigNetworkFA], collectorTemplateId, collectorCid),
+    reader.getDisclosedContract([sigNetworkFA], priceConfigTemplateId, chosen.ev.contractId),
+  ]);
+
+  return {
+    registrationCid: registration.ev.contractId,
+    collectorCid,
+    priceConfigCid: chosen.ev.contractId,
+    priceConfig: chosen.config,
+    choiceContextData: {
+      values: {
+        [PRICE_CONFIG_CONTEXT_KEY]: { tag: "AV_ContractId", value: chosen.ev.contractId },
+      },
+    },
+    disclosedContracts: [dRegistration, dCollector, dPriceConfig],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -278,13 +345,13 @@ export async function getCurrentFeeDisclosure(
 export interface FeeTransferDetails {
   /** The requester (transfer `sender`). */
   sender: string;
-  /** Fee receiver (`SignerFeeConfig.feeReceiver`). */
+  /** Fee receiver (`FeePriceConfig.feeReceiver`). */
   feeReceiver: string;
-  /** CC instrument admin/DSO party (`SignerFeeConfig.instrumentAdmin`). */
+  /** CC instrument admin/DSO party (`FeePriceConfig.instrumentAdmin`). */
   instrumentAdmin: string;
-  /** CC instrument id (`SignerFeeConfig.instrumentId`, e.g. `"Amulet"`). */
+  /** CC instrument id (`FeePriceConfig.instrumentId`, e.g. `"Amulet"`). */
   instrumentId: string;
-  /** Fee amount, as a Daml `Decimal` string (`SignerFeeConfig.feeAmount`). */
+  /** Fee amount, as a Daml `Decimal` string (`FeePriceConfig.feeAmount`). */
   amount: string;
   /** The selected input holdings (from {@link selectInputHoldings}). */
   inputHoldingCids: string[];
@@ -294,7 +361,7 @@ export interface FeeTransferDetails {
 export interface ResolvedTransferFactory {
   /** The CC `TransferFactory` contract id (the `transferFactoryCid` choice arg). */
   transferFactoryCid: string;
-  /** Registry `choiceContextData` → the `Execute` `transferContext` argument. */
+  /** Registry `choiceContextData` → the `RequestSignature` `transferContext` argument. */
   transferContext: TransferChoiceContext;
   /** Registry disclosures (factory, `AmuletRules`, `OpenMiningRound`) for the submission. */
   disclosedContracts: DisclosedContract[];
@@ -305,7 +372,7 @@ interface TransferFactoryResponse {
   factoryId: string;
   transferKind?: string;
   choiceContext: {
-    disclosedContracts: DisclosedContract[];
+    disclosedContracts?: DisclosedContract[];
     choiceContextData: TransferChoiceContext;
   };
 }
@@ -365,8 +432,7 @@ export async function getTransferFactoryForFee(
         inputHoldingCids: details.inputHoldingCids,
         meta: {
           values: {
-            "splice.lfdecentralizedtrust.org/reason":
-              opts.reason ?? "sigNetwork CC signature fee",
+            "splice.lfdecentralizedtrust.org/reason": opts.reason ?? "sigNetwork CC signature fee",
           },
         },
       },
@@ -389,7 +455,7 @@ export async function getTransferFactoryForFee(
       `getTransferFactoryForFee: registry ${url} returned ${res.status} ${await res.text()}`,
     );
   }
-  const parsed = (await res.json()) as TransferFactoryResponse;
+  const parsed = (await res.json()) as Partial<TransferFactoryResponse> | undefined;
   if (!parsed?.factoryId || !parsed.choiceContext) {
     throw new Error(
       `getTransferFactoryForFee: malformed registry response ${JSON.stringify(parsed)}`,
@@ -406,45 +472,63 @@ export async function getTransferFactoryForFee(
 // Choice-arg assembly (pure)
 // ---------------------------------------------------------------------------
 
+/** Daml `ExtraArgs` as it travels over the JSON Ledger API. */
+export interface FeeExtraArgs {
+  context: TransferChoiceContext;
+  meta: { values: Record<string, string> };
+}
+
 /** The fee-related arguments threaded into `RequestDeposit` / `RequestWithdrawal`. */
 export interface FeeChoiceArgs {
-  feeConfigCid: string;
-  transferFactoryCid: string;
-  inputHoldingCids: string[];
-  transferContext: TransferChoiceContext;
+  feeRegistrationCid: string;
+  feeInputs: string[];
+  feeExtraArgs: FeeExtraArgs;
 }
 
 /**
  * Fold the three resolved inputs into the fee choice arguments that
- * `RequestDeposit` / `RequestWithdrawal` (and `Execute`) require.
+ * `RequestDeposit` / `RequestWithdrawal` (and `Signer.RequestSignature`)
+ * require: the fee endpoint's context, the CC registry's transfer context, and
+ * the transfer-factory reference are merged into one opaque `feeExtraArgs`
+ * envelope read by the `signet-fee-amulet` charge implementation.
  *
- * The matching disclosures — `fee.disclosure` plus `factory.disclosedContracts`
- * — must be attached to the submission's `disclosedContracts`; combine them with
- * {@link collectFeeDisclosures}.
+ * The matching disclosures — fee-endpoint + registry — must be attached to the
+ * submission; combine them with {@link collectFeeDisclosures}.
  */
 export function assembleFeeChoiceArgs(
-  fee: CurrentFeeDisclosure,
+  collector: FeeCollectorContext,
   factory: ResolvedTransferFactory,
   selection: HoldingSelection,
 ): FeeChoiceArgs {
   return {
-    feeConfigCid: fee.contractId,
-    transferFactoryCid: factory.transferFactoryCid,
-    inputHoldingCids: selection.inputHoldingCids,
-    transferContext: factory.transferContext,
+    feeRegistrationCid: collector.registrationCid,
+    feeInputs: selection.inputHoldingCids,
+    feeExtraArgs: {
+      context: {
+        values: {
+          ...collector.choiceContextData.values,
+          ...factory.transferContext.values,
+          [TRANSFER_FACTORY_CONTEXT_KEY]: {
+            tag: "AV_ContractId",
+            value: factory.transferFactoryCid,
+          },
+        },
+      },
+      meta: { values: {} },
+    },
   };
 }
 
 /**
- * Collect every disclosure a fee-bearing submission must attach: the
- * `SignerFeeConfig` envelope and the registry's factory/rules/round disclosures.
- * The requester's own holdings need no disclosure (it is their stakeholder), but
- * extra disclosures can be appended via `extra`.
+ * Collect every disclosure a fee-bearing submission must attach: the fee
+ * endpoint's (registration, collector, price config) and the registry's
+ * (factory, `AmuletRules`, `OpenMiningRound`). The requester's own holdings
+ * need no disclosure; extras can be appended via `extra`.
  */
 export function collectFeeDisclosures(
-  fee: CurrentFeeDisclosure,
+  collector: FeeCollectorContext,
   factory: ResolvedTransferFactory,
   extra: DisclosedContract[] = [],
 ): DisclosedContract[] {
-  return [fee.disclosure, ...factory.disclosedContracts, ...extra];
+  return [...collector.disclosedContracts, ...factory.disclosedContracts, ...extra];
 }

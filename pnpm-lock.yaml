@@ -124,6 +124,12 @@ importers:
       '@daml.js/daml-vault-poc-0.0.1':
         specifier: file:./generated/model/daml-vault-poc-0.0.1
         version: file:ts-packages/canton-sig/generated/model/daml-vault-poc-0.0.1
+      '@daml.js/signet-api-fee-v1-1.0.0':
+        specifier: file:./generated/model/signet-api-fee-v1-1.0.0
+        version: file:ts-packages/canton-sig/generated/model/signet-api-fee-v1-1.0.0
+      '@daml.js/signet-fee-amulet-0.0.1':
+        specifier: file:./generated/model/signet-fee-amulet-0.0.1
+        version: file:ts-packages/canton-sig/generated/model/signet-fee-amulet-0.0.1
       '@types/node':
         specifier: ^25.3.0
         version: 25.5.0
@@ -243,14 +249,17 @@ packages:
   '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0@file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0':
     resolution: {directory: ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0, type: directory}
 
+  '@daml.js/signet-api-fee-v1-1.0.0@file:ts-packages/canton-sig/generated/model/signet-api-fee-v1-1.0.0':
+    resolution: {directory: ts-packages/canton-sig/generated/model/signet-api-fee-v1-1.0.0, type: directory}
+
+  '@daml.js/signet-fee-amulet-0.0.1@file:ts-packages/canton-sig/generated/model/signet-fee-amulet-0.0.1':
+    resolution: {directory: ts-packages/canton-sig/generated/model/signet-fee-amulet-0.0.1, type: directory}
+
   '@daml.js/splice-api-token-holding-v1-1.0.0@file:ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0':
     resolution: {directory: ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0, type: directory}
 
   '@daml.js/splice-api-token-metadata-v1-1.0.0@file:ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0':
     resolution: {directory: ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0, type: directory}
-
-  '@daml.js/splice-api-token-transfer-instruction-v1-1.0.0@file:ts-packages/canton-sig/generated/model/splice-api-token-transfer-instruction-v1-1.0.0':
-    resolution: {directory: ts-packages/canton-sig/generated/model/splice-api-token-transfer-instruction-v1-1.0.0, type: directory}
 
   '@daml/types@3.4.11':
     resolution: {integrity: sha512-lGskPPTFVtJpLbHi1XoqG7/mnOU/zJcomQixoszEbtU7D63t7xDAW9yvtaQa7C1Uz70OOBhM1z72Se63GR3NXg==}
@@ -2352,9 +2361,9 @@ snapshots:
   '@daml.js/daml-signer-0.0.1@file:ts-packages/canton-sig/generated/model/daml-signer-0.0.1':
     dependencies:
       '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0
+      '@daml.js/signet-api-fee-v1-1.0.0': file:ts-packages/canton-sig/generated/model/signet-api-fee-v1-1.0.0
       '@daml.js/splice-api-token-holding-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0
       '@daml.js/splice-api-token-metadata-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0
-      '@daml.js/splice-api-token-transfer-instruction-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-transfer-instruction-v1-1.0.0
       '@mojotech/json-type-validation': 3.1.0
 
   '@daml.js/daml-stdlib-DA-Time-Types-1.0.0@file:ts-packages/canton-sig/generated/model/daml-stdlib-DA-Time-Types-1.0.0':
@@ -2366,13 +2375,27 @@ snapshots:
       '@daml.js/daml-prim-DA-Types-1.0.0': file:ts-packages/canton-sig/generated/model/daml-prim-DA-Types-1.0.0
       '@daml.js/daml-signer-0.0.1': file:ts-packages/canton-sig/generated/model/daml-signer-0.0.1
       '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0
+      '@daml.js/signet-api-fee-v1-1.0.0': file:ts-packages/canton-sig/generated/model/signet-api-fee-v1-1.0.0
       '@daml.js/splice-api-token-holding-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0
       '@daml.js/splice-api-token-metadata-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0
-      '@daml.js/splice-api-token-transfer-instruction-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-transfer-instruction-v1-1.0.0
       '@mojotech/json-type-validation': 3.1.0
 
   '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0@file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0':
     dependencies:
+      '@mojotech/json-type-validation': 3.1.0
+
+  '@daml.js/signet-api-fee-v1-1.0.0@file:ts-packages/canton-sig/generated/model/signet-api-fee-v1-1.0.0':
+    dependencies:
+      '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0
+      '@daml.js/splice-api-token-holding-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0
+      '@daml.js/splice-api-token-metadata-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0
+      '@mojotech/json-type-validation': 3.1.0
+
+  '@daml.js/signet-fee-amulet-0.0.1@file:ts-packages/canton-sig/generated/model/signet-fee-amulet-0.0.1':
+    dependencies:
+      '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0
+      '@daml.js/signet-api-fee-v1-1.0.0': file:ts-packages/canton-sig/generated/model/signet-api-fee-v1-1.0.0
+      '@daml.js/splice-api-token-metadata-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0
       '@mojotech/json-type-validation': 3.1.0
 
   '@daml.js/splice-api-token-holding-v1-1.0.0@file:ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0':
@@ -2386,13 +2409,6 @@ snapshots:
     dependencies:
       '@daml.js/daml-stdlib-DA-Time-Types-1.0.0': file:ts-packages/canton-sig/generated/model/daml-stdlib-DA-Time-Types-1.0.0
       '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0
-      '@mojotech/json-type-validation': 3.1.0
-
-  '@daml.js/splice-api-token-transfer-instruction-v1-1.0.0@file:ts-packages/canton-sig/generated/model/splice-api-token-transfer-instruction-v1-1.0.0':
-    dependencies:
-      '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0
-      '@daml.js/splice-api-token-holding-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0
-      '@daml.js/splice-api-token-metadata-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0
       '@mojotech/json-type-validation': 3.1.0
 
   '@daml/types@3.4.11':

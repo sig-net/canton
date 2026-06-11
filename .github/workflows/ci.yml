@@ -48,11 +48,12 @@ jobs:
       - name: Build DAR, run Daml tests & generate codegen
         run: |
           dpm build --all
-          for pkg in daml-abi daml-uint256 daml-eip712 daml-signer daml-vault; do
+          for pkg in daml-abi daml-uint256 daml-eip712 signet-fee-amulet-tests daml-signer-tests daml-vault-tests; do
             echo "Testing daml-packages/$pkg..."
             (cd daml-packages/$pkg && dpm test)
           done
           dpm codegen-js daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js
+          dpm codegen-js daml-packages/signet-fee-amulet/.daml/dist/signet-fee-amulet-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js
 
       - run: pnpm install --frozen-lockfile
 

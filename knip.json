@@ -7,6 +7,7 @@
       "entry": ["src/scripts/*.ts", "src/test/**/*.test.ts"]
     },
     "ts-packages/canton-sig": {
+      "entry": ["scripts/reprice-fee.ts"],
       "ignoreDependencies": ["@daml/types", "@mojotech/json-type-validation"]
     }
   }
