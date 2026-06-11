@@ -41,7 +41,6 @@ export {
   getTransferFactoryForFee,
   assembleFeeChoiceArgs,
   collectFeeDisclosures,
-  CC_DECIMALS,
   MAX_TRANSFER_INPUTS,
   TRANSFER_FACTORY_REGISTRY_PATH,
   HOLDING_INTERFACE_ID,
@@ -61,7 +60,7 @@ export type {
   FeeExtraArgs,
   FeeChoiceArgs,
 } from "./fee.js";
-export { computeFeeCc } from "./fee-pricing.js";
+export { computeFeeCc, CC_DECIMALS } from "./fee-pricing.js";
 export type { FeePricingInputs, FeePricingResult } from "./fee-pricing.js";
 export {
   repriceWindow,

@@ -391,6 +391,39 @@ async function prepareFeeInputs(): Promise<{
   };
 }
 
+/**
+ * Submit a fee-bearing Vault request: assemble the CC fee inputs, fill the
+ * shared request envelope (key version, algo/dest, schemas), and attach the
+ * Vault + Signer + fee disclosures. `args` carries the choice-specific fields.
+ */
+async function submitVaultRequest(
+  choice: "RequestDeposit" | "RequestWithdrawal",
+  args: Record<string, unknown>,
+) {
+  const fee = await prepareFeeInputs();
+  return canton.exerciseChoice(
+    userId,
+    [party],
+    VAULT_T,
+    env!.MPC_CANTON_VAULT_CONTRACT_ID,
+    choice,
+    {
+      requester: party,
+      signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
+      keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
+      algo: ALGO,
+      dest: DEST,
+      params: "",
+      outputDeserializationSchema: BOOL_SCHEMA,
+      respondSerializationSchema: BOOL_SCHEMA,
+      ...args,
+      ...fee.args, // feeRegistrationCid, feeInputs, feeExtraArgs
+    },
+    undefined,
+    [vaultDisclosure, signerDisclosure, ...fee.disclosures],
+  );
+}
+
 // ── Specs ─────────────────────────────────────────────────────────────────────--
 describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
   let holdingCid: string | undefined;
@@ -454,29 +487,10 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
 
       // RequestDeposit (Vault + Signer + fee contracts disclosed) → PendingDeposit
       // + SignBidirectionalEvent. The fee is charged atomically inside Signer.RequestSignature.
-      const fee = await prepareFeeInputs();
-      const depositResult = await canton.exerciseChoice(
-        userId,
-        [party],
-        VAULT_T,
-        env!.MPC_CANTON_VAULT_CONTRACT_ID,
-        "RequestDeposit",
-        {
-          requester: party,
-          signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
-          path: subPath,
-          evmTxParams,
-          keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
-          algo: ALGO,
-          dest: DEST,
-          params: "",
-          outputDeserializationSchema: BOOL_SCHEMA,
-          respondSerializationSchema: BOOL_SCHEMA,
-          ...fee.args, // feeRegistrationCid, feeInputs, feeExtraArgs
-        },
-        undefined,
-        [vaultDisclosure, signerDisclosure, ...fee.disclosures],
-      );
+      const depositResult = await submitVaultRequest("RequestDeposit", {
+        path: subPath,
+        evmTxParams,
+      });
       const pending = findCreated(depositResult.transaction.events, "PendingDeposit");
       const { requestId } = pending.createArgument as PendingDeposit;
 
@@ -558,30 +572,11 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
 
       // RequestWithdrawal (Vault + Signer + fee contracts disclosed) →
       // PendingWithdrawal + SignBidirectionalEvent. Fee charged inside Signer.RequestSignature.
-      const wdlFee = await prepareFeeInputs();
-      const wdlResult = await canton.exerciseChoice(
-        userId,
-        [party],
-        VAULT_T,
-        env!.MPC_CANTON_VAULT_CONTRACT_ID,
-        "RequestWithdrawal",
-        {
-          requester: party,
-          signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
-          evmTxParams,
-          recipientAddress: recipientPadded,
-          balanceCid: holdingCid,
-          keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
-          algo: ALGO,
-          dest: DEST,
-          params: "",
-          outputDeserializationSchema: BOOL_SCHEMA,
-          respondSerializationSchema: BOOL_SCHEMA,
-          ...wdlFee.args, // feeRegistrationCid, feeInputs, feeExtraArgs
-        },
-        undefined,
-        [vaultDisclosure, signerDisclosure, ...wdlFee.disclosures],
-      );
+      const wdlResult = await submitVaultRequest("RequestWithdrawal", {
+        evmTxParams,
+        recipientAddress: recipientPadded,
+        balanceCid: holdingCid,
+      });
       const pendingWdl = findCreated(wdlResult.transaction.events, "PendingWithdrawal");
       const { requestId } = pendingWdl.createArgument as PendingWithdrawal;
 

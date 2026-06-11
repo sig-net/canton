@@ -29,15 +29,13 @@
 
 import { parseUnits, formatUnits } from "viem";
 
+import { CC_DECIMALS } from "./fee-pricing.js";
 import {
   FeePriceConfig,
   CcFeeCollector,
 } from "@daml.js/signet-fee-amulet-0.0.1/lib/Signet/Fee/Amulet/module.js";
 import { FeeCollectorRegistration } from "@daml.js/signet-api-fee-v1-1.0.0/lib/Signet/Api/Fee/V1/module.js";
 import type { CreatedEvent, DisclosedContract } from "./infra/canton-client.js";
-
-/** Daml `Decimal` is `Numeric 10`; Canton Coin (Amulet) amounts use scale 10. */
-export const CC_DECIMALS = 10;
 
 /**
  * Upper bound on `inputHoldingCids` for a single `TransferFactory_Transfer`
@@ -262,8 +260,6 @@ export interface FeeCollectorContext {
  * @param reader - A {@link CantonClient} (or stub) reading as the fee admin.
  * @param sigNetworkFA - The featured-app party whose fee infra to serve.
  * @param opts.nowMs - Override "now" for the window check (defaults to `Date.now()`).
- * @param opts.registrationTemplateId - Override the registration template id.
- * @param opts.priceConfigTemplateId - Override the price-config template id.
  * @param opts.collectorTemplateId - Template id used to disclose the collector
  *   contract (defaults to the current `CcFeeCollector`; the endpoint knows its
  *   own implementation).
@@ -274,19 +270,19 @@ export async function getFeeCollectorContext(
   sigNetworkFA: string,
   opts: {
     nowMs?: number;
-    registrationTemplateId?: string;
-    priceConfigTemplateId?: string;
     collectorTemplateId?: string;
   } = {},
 ): Promise<FeeCollectorContext> {
   const nowMs = opts.nowMs ?? Date.now();
-  const registrationTemplateId = opts.registrationTemplateId ?? FeeCollectorRegistration.templateId;
-  const priceConfigTemplateId = opts.priceConfigTemplateId ?? FeePriceConfig.templateId;
+  const registrationTemplateId = FeeCollectorRegistration.templateId;
+  const priceConfigTemplateId = FeePriceConfig.templateId;
   const collectorTemplateId = opts.collectorTemplateId ?? CcFeeCollector.templateId;
 
-  const registrations = (
-    await reader.getActiveContracts([sigNetworkFA], registrationTemplateId, false)
-  )
+  const [registrationEvents, configEvents] = await Promise.all([
+    reader.getActiveContracts([sigNetworkFA], registrationTemplateId, false),
+    reader.getActiveContracts([sigNetworkFA], priceConfigTemplateId, false),
+  ]);
+  const registrations = registrationEvents
     .map((ev) => ({
       ev,
       reg: FeeCollectorRegistration.decoder.runWithException(ev.createArgument),
@@ -303,7 +299,7 @@ export async function getFeeCollectorContext(
   }
   const registration = registrations[0]!;
 
-  const configs = (await reader.getActiveContracts([sigNetworkFA], priceConfigTemplateId, false))
+  const configs = configEvents
     .map((ev) => ({ ev, config: parsePriceConfig(ev.createArgument) }))
     .filter(({ config }) => config.sigNetworkFA === sigNetworkFA)
     .filter(({ config }) => isPriceConfigInWindow(config, nowMs))
