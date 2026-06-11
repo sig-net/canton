@@ -27,7 +27,7 @@ Per-package details live in the documents listed under [Where to start](#where-t
 | Tool           | Version | Install                                                           |
 | -------------- | ------- | ----------------------------------------------------------------- |
 | Java           | 21+     | [Temurin](https://adoptium.net/)                                  |
-| Daml SDK (DPM) | 3.4.11  | `curl -sSL https://get.digitalasset.com/install/install.sh \| sh` |
+| Daml SDK (DPM) | 3.5.1   | `curl -sSL https://get.digitalasset.com/install/install.sh \| sh` |
 | Node.js        | 24+     | [nodejs.org](https://nodejs.org/)                                 |
 | pnpm           | 10+     | `corepack enable && corepack prepare pnpm@latest --activate`      |
 

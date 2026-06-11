@@ -1,4 +1,4 @@
-sdk-version: 3.4.11
+sdk-version: 3.5.1
 name: signet-api-fee-v1
 version: 1.0.0
 source: daml

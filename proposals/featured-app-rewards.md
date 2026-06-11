@@ -7,6 +7,18 @@
 > throughline that survives: Signet earns only if its featured party is a
 > **confirmer** on the relevant transactions.
 
+> **Implementation status (2026-06-11, `feat/cc-deposit-charge`).** Two pieces
+> of this note have since shipped: **(1)** the featured party is now a dedicated
+> `sigNetworkFA` (split from the MPC's `sigNetwork`) that co-signs — i.e.
+> **confirms** — `SignBidirectionalEvent` and both MPC evidence events. This
+> captures the byte-heavy request envelope while resolving §4's Tier-2 tension:
+> the confirmer is a separate FA party, not `sigNetwork`, so the anti-forgery
+> property is intact. **(2)** The CC service fee of §7 is implemented exactly as
+> recommended — an atomic token-standard transfer inside `Signer.RequestSignature`,
+> fail-closed (see [`daml-signer` README § CC signature fee](../daml-packages/daml-signer/README.md#cc-signature-fee)).
+> §3 reflects the shipped roles. Tier 1 (co-signing the vault value layer)
+> remains unimplemented strategy.
+
 This note summarizes the current, verified understanding of Canton Featured App
 rewards for Signet's Canton/MPC bridge architecture.
 
@@ -20,9 +32,10 @@ rewards for Signet's Canton/MPC bridge architecture.
 - Reward is a **pooled share** of a fixed per-round issuance, and the
   **submitter pays** the traffic while the **confirmer earns** it.
 - For Signet: register a `FeaturedAppRight`, then make the Signet provider
-  party a **confirmer (signatory)** on the traffic worth monetizing. Today
-  Signet only confirms its own MPC _response_ evidence; the high-value asset
-  movements in the vault are confirmed by operators/users, not Signet.
+  party a **confirmer (signatory)** on the traffic worth monetizing. As
+  shipped, `sigNetworkFA` confirms the request event and both MPC evidence
+  events (§3); the high-value asset movements in the vault are still confirmed
+  by operators/users only — the open Tier-1 surface.
 
 ## 1. The current reward model (verified against official docs)
 
@@ -109,23 +122,27 @@ function in the interim.
 
 ## 3. Where Signet confirms today (code mapping)
 
-`sigNetwork` is Signet's MPC/provider party. Reward eligibility per contract, as
-the templates stand today:
+Signet now runs two parties: `sigNetwork` (the MPC service) and `sigNetworkFA`
+(the featured provider party holding the `FeaturedAppRight`; co-signs the Signer
+once via `SignerProposal`/`AcceptSigner` and is thereafter an ambient
+co-signatory). Reward eligibility per contract, as the templates stand today:
 
-| Contract                                        | `sigNetwork` role today | Confirmer? | Earns? |
-| ----------------------------------------------- | ----------------------- | ---------- | ------ |
-| `SignatureRespondedEvent` (`Signer.daml:191`)   | **signatory**           | yes        | ✅     |
-| `RespondBidirectionalEvent` (`Signer.daml:214`) | **signatory**           | yes        | ✅     |
-| `SignBidirectionalEvent` (`Signer.daml:161`)    | observer                | no         | ❌     |
-| `Vault` (`Erc20Vault.daml:166`)                 | observer                | no         | ❌     |
-| `Erc20Holding` (`Erc20Vault.daml:80`)           | not even observer       | no         | ❌     |
+| Contract                                    | `sigNetworkFA` role today                    | Confirmer? | Earns? |
+| ------------------------------------------- | -------------------------------------------- | ---------- | ------ |
+| `SignBidirectionalEvent` (`Signer.daml`)    | **signatory** (ambient via co-signed Signer) | yes        | ✅     |
+| `SignatureRespondedEvent` (`Signer.daml`)   | **signatory**                                | yes        | ✅     |
+| `RespondBidirectionalEvent` (`Signer.daml`) | **signatory**                                | yes        | ✅     |
+| `Vault` (`Erc20Vault.daml`)                 | not a stakeholder                            | no         | ❌     |
+| `Erc20Holding` (`Erc20Vault.daml`)          | not a stakeholder                            | no         | ❌     |
 
-Key point: Signet already signs (and therefore confirms) the MPC **response**
-evidence — but it is the **submitter** of those `Signer.Respond` /
-`Signer.RespondBidirectional` transactions (`Signer.daml:63,83`), so it pays
-that traffic itself. The high-value, byte-heavy asset movements
-(`ClaimDeposit` → `Erc20Holding`, `CompleteWithdrawal`) are submitted by the
-`requester` and confirmed by `operators` — **not** Signet.
+Key points: the byte-heaviest envelope — the request event, with calldata and
+schemas — is **submitted and paid by the requester** while `sigNetworkFA`
+confirms it: the good direction (submitter pays, confirmer earns). The response
+evidence is also FA-confirmed, but `sigNetwork` submits those transactions, so
+Signet pays that traffic itself (the CC signature fee prices this in — see §7).
+The high-value asset movements (`ClaimDeposit` → `Erc20Holding`,
+`CompleteWithdrawal`) are still submitted by the `requester` and confirmed by
+`operators` only — **not** Signet; that is the remaining Tier-1 surface.
 
 ## 4. Recommended strategy — tiered by custody cost
 
@@ -211,8 +228,15 @@ Per-transaction value governance is gone. It is replaced by:
 
 ## 7. CC service fee and the `deposit` field (verified)
 
-The Daml `Signer` flow models no CC fee/deposit, and the MPC node hardcodes the
-Canton deposit to zero — `SignBidirectionalEvent::Canton(_) => 0` in
+> **Shipped.** The recommendation below is implemented: `Signer.RequestSignature`
+> charges a CC signature fee as an atomic token-standard transfer (requester →
+> `feeReceiver`), fail-closed before the `SignBidirectionalEvent` is created.
+> See [`daml-signer` README § CC signature fee](../daml-packages/daml-signer/README.md#cc-signature-fee).
+> The `deposit`-field analysis below remains true — the node-side field is not,
+> and must never be, the collection mechanism.
+
+The MPC node hardcodes the Canton deposit to zero —
+`SignBidirectionalEvent::Canton(_) => 0` in
 `mpc/chain-signatures/node/src/stream/ops.rs:129`, because the Canton event
 carries no such field (`indexer_canton/mod.rs`). That is correct, and putting a
 value in that field would **not** charge anyone:
@@ -259,8 +283,8 @@ reward path. The real reward surface remains Tier 1 (§4).
 
 1. Apply for / confirm featured-app status and provision a `FeaturedAppRight`
    for the Signet provider party.
-2. **Tier 0 now:** harvest rewards on the MPC response evidence Signet already
-   signs — no template change.
+2. **Tier 0 now (shipped):** `sigNetworkFA` co-signs the request event and both
+   MPC evidence events, so featured status immediately earns on all three.
 3. **Tier 1 as a designed change:** make the Signet provider party a signatory
    (confirmer) on `Erc20Holding` and the claim/withdraw result views; design the
    partner authorization/delegation so value transactions carry Signet's
@@ -270,10 +294,10 @@ reward path. The real reward surface remains Tier 1 (§4).
    regresses anti-forgery.
 6. Automate minting via `MintingDelegations`; use beneficiaries only to
    revenue-share rewards Signet has already earned.
-7. **CC service fee (durable revenue, optional):** charge it as an on-ledger
-   token-standard Canton Coin transfer to the Signet party, composed in the
-   request flow — **not** by setting the node `deposit` field (which is inert
-   for Canton; see §7). Treat it as revenue; the only reward on it is the
+7. **CC service fee (durable revenue — shipped):** charged as an on-ledger
+   token-standard Canton Coin transfer to the fee receiver, composed atomically
+   in the request flow — **not** by setting the node `deposit` field (which is
+   inert for Canton; see §7). Treat it as revenue; the only reward on it is the
    traffic from Signet confirming that transfer.
 8. Validate on DevNet/TestNet: confirm Signet's party appears as a confirmer on
    the intended views and that coupons attribute to it; inspect Scan traffic /

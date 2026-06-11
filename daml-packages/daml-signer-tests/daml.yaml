@@ -1,4 +1,4 @@
-sdk-version: 3.4.11
+sdk-version: 3.5.1
 name: daml-signer-tests
 version: 0.0.1
 source: daml
@@ -13,3 +13,6 @@ data-dependencies:
   - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
 build-options:
   - -Wno-crypto-text-is-alpha
+  # Mock templates + daml-script in one package is the point of this test-only
+  # DAR (never uploaded to a ledger).
+  - -Wno-template-interface-depends-on-daml-script
