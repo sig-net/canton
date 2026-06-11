@@ -2,8 +2,7 @@
  * CC signature-fee client support.
  *
  * Before a deposit/withdrawal can be submitted, the requester must assemble the
- * inputs that `Signer.RequestSignature` charges the CC fee with (see
- * `docs/superpowers/specs/2026-06-10-signer-fee-architecture-design.md` §5.5):
+ * inputs that `Signer.RequestSignature` charges the CC fee with:
  *
  * 1. {@link getFeeCollectorContext} — read the active `FeeCollectorRegistration`
  *    (the sigNetworkFA-signed trust anchor; the featured-app party administers
@@ -385,8 +384,8 @@ interface TransferFactoryResponse {
  * be attached to the submission.
  *
  * @remarks The exact instrument-admin attribution and any per-version request
- * fields must be confirmed against the target Splice version's live registry
- * (spec §13 Q3); `fetchImpl` is injectable so the mapping is unit-tested.
+ * fields must be confirmed against the target Splice version's live registry;
+ * `fetchImpl` is injectable so the mapping is unit-tested.
  *
  * @param registryUrl - Base URL of the CC instrument's token-standard registry.
  * @param details - The fee transfer to resolve a factory for.

@@ -10,7 +10,7 @@ const base: FeePricingInputs = {
   profit: 0.1,
 };
 
-describe("computeFeeCc (§6.3 golden)", () => {
+describe("computeFeeCc (fee-formula golden)", () => {
   it("matches a hand-computed reference: 400KB @ $1/MB, $0.005/CC, 0.15+0.10", () => {
     // cost_usd = 400000/1e6 * 1 = 0.4
     // fee_cc   = (0.4 / 0.005) * (1 + 0.15 + 0.10) = 80 * 1.25 = 100

@@ -186,13 +186,12 @@ template Vault
         params       : Text
         outputDeserializationSchema : Text
         respondSerializationSchema  : Text
-        -- CC signature-fee inputs (docs/superpowers/specs/
-        -- 2026-06-10-signer-fee-architecture-design.md §5.4): the requester pays
-        -- the featured-app fee atomically inside Signer.RequestSignature via the
-        -- registered late-bound FeeCollector. Sourced client-side as disclosed
-        -- contracts (FA fee endpoint + token registry); the charge fail-closes
-        -- the whole request unless it settles. Opaque by design — these three
-        -- args are expected to never change again for fee reasons.
+        -- CC signature-fee inputs: the requester pays the featured-app fee
+        -- atomically inside Signer.RequestSignature via the registered
+        -- late-bound FeeCollector. Sourced client-side as disclosed contracts
+        -- (FA fee endpoint + token registry); the charge fail-closes the whole
+        -- request unless it settles. Opaque by design — these three args are
+        -- expected to never change again for fee reasons.
         feeRegistrationCid : ContractId FeeCollectorRegistration
         feeInputs          : [ContractId Holding]
         feeExtraArgs       : ExtraArgs
@@ -323,16 +322,10 @@ template Vault
 
         archive balanceCid        -- optimistic debit: refunded by CompleteWithdrawal if MPC reports failure
 
-        -- TEST MODE (single-EVM DevNet): the MPC only accepts caip2 "eip155:1"
-        -- (hardcoded table in mpc primitives `from_caip2_chain_id`; anything else →
-        -- UnknownCaip2Id, rejected before the outcome watcher is registered). We advertise
-        -- "eip155:1" while the tx keeps its own chainId (e.g. Sepolia 11155111): the
-        -- signature stays valid on-chain and the MPC's single EVM indexer still observes
-        -- it. caip2 is NOT in the key-derivation epsilon, so the signing address is
-        -- unchanged. PROD: restore the Eip712 import + derive from chainId:
-        --   let caip2Id = "eip155:" <> chainIdToDecimalText evmTxParams.chainId
+        -- TEST MODE caip2 pinning: see RequestDeposit above.
         let caip2Id = "eip155:1"
-        -- Vault namespaces its key derivation via path so two vaults sharing the same operator set still get distinct EVM keys
+        -- key-derivation namespacing as in RequestDeposit, but at the vault-level
+        -- "root" path: withdrawals sign from the vault's own key, not a per-requester one
         let fullPath = vaultId <> ",root"
 
         signEventCid <- exercise signerCid RequestSignature with
