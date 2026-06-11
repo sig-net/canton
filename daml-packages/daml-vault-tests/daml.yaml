@@ -10,7 +10,6 @@ data-dependencies:
   - ../daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar
   - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
   - ../daml-signer-tests/.daml/dist/daml-signer-tests-0.0.1.dar
-  - ../daml-eip712/.daml/dist/daml-eip712-0.0.1.dar
   - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
   - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
 build-options:

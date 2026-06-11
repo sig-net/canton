@@ -6,12 +6,20 @@ import Daml.Script
 
 import Signer ()
 import Erc20Vault
-import TestVault (mkVaultFeeInfra, mkSigner)
-import TestFeeCollector (noFeeExtras)
-import TestFixtures (testPubKeyHex, sampleVaultAddress, sampleEvmType2Params, erc20BoolSchema)
+import TestVault (mkVaultFeeInfra, mkSigner, mkDepositArgs)
+import TestFixtures (testPubKeyHex, sampleVaultAddress, sampleEvmType2Params)
 
 dirtyVaultAddress : BytesHex
 dirtyVaultAddress = "ffffffffffffffffffffffffd8da6bf26964af9d7eed9e03e53415d37aa96045"
+
+-- Canonical VaultProposal payload; tests vary operators/signed/vaultId and
+-- override the address under test via record update.
+mkProposal : Party -> [Party] -> [Party] -> Text -> VaultProposal
+mkProposal sigNetwork allOperators alreadySigned vaultId = VaultProposal with
+  allOperators; alreadySigned; sigNetwork
+  evmVaultAddress = sampleVaultAddress
+  mpcResponseVerifyKey = testPubKeyHex
+  vaultId
 
 ------------------------------------------------------------------------
 -- One remaining sign completes the proposal → Right (Vault)
@@ -26,11 +34,7 @@ testSingleOperatorProposal = do
 
   -- op1 bootstraps the proposal; op2 is the sole remaining signer
   proposalCid <- submit op1 do
-    createCmd VaultProposal with
-      allOperators = [op1, op2]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "single-sign-vault"
+    createCmd (mkProposal sigNetwork [op1, op2] [op1] "single-sign-vault")
 
   result <- submit op2 do
     exerciseCmd proposalCid SignVault with signer = op2
@@ -57,11 +61,7 @@ testTwoOperatorSequentialSign = do
   op3        <- allocateParty "Op3"
 
   proposalCid <- submit op1 do
-    createCmd VaultProposal with
-      allOperators = [op1, op2, op3]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "three-op-vault"
+    createCmd (mkProposal sigNetwork [op1, op2, op3] [op1] "three-op-vault")
 
   -- op2 signs → Left (still waiting for op3)
   result1 <- submit op2 do
@@ -97,11 +97,7 @@ testDoubleSignFails = do
   op3        <- allocateParty "Op3"
 
   proposalCid <- submit op1 do
-    createCmd VaultProposal with
-      allOperators = [op1, op2, op3]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "double-sign-vault"
+    createCmd (mkProposal sigNetwork [op1, op2, op3] [op1] "double-sign-vault")
 
   -- op2 signs → Left (new proposal with alreadySigned=[op2, op1])
   result <- submit op2 do
@@ -134,11 +130,7 @@ testNonObserverCannotExercise = do
   rogue      <- allocateParty "Rogue"
 
   proposalCid <- submit op1 do
-    createCmd VaultProposal with
-      allOperators = [op1, op2]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "rogue-vault"
+    createCmd (mkProposal sigNetwork [op1, op2] [op1] "rogue-vault")
 
   submitMustFail rogue do
     exerciseCmd proposalCid SignVault with signer = rogue
@@ -156,11 +148,7 @@ testEmptyOperatorsFails = do
   op1        <- allocateParty "Op1"
 
   submitMustFail op1 do
-    createCmd VaultProposal with
-      allOperators = []; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "empty-ops"
+    createCmd (mkProposal sigNetwork [] [op1] "empty-ops")
 
   pure ()
 
@@ -175,11 +163,7 @@ testDuplicateOperatorsFails = do
   op1        <- allocateParty "Op1"
 
   submitMustFail op1 do
-    createCmd VaultProposal with
-      allOperators = [op1, op1]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "dup-ops"
+    createCmd (mkProposal sigNetwork [op1, op1] [op1] "dup-ops")
 
   pure ()
 
@@ -194,11 +178,8 @@ testDirtyVaultAddressPaddingFails = do
   op1        <- allocateParty "Op1"
 
   submitMustFail op1 do
-    createCmd VaultProposal with
-      allOperators = [op1]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = dirtyVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "dirty-address-proposal"
+    createCmd ((mkProposal sigNetwork [op1] [op1] "dirty-address-proposal")
+      with evmVaultAddress = dirtyVaultAddress)
 
   pure ()
 
@@ -217,11 +198,7 @@ testSigningOrderIndependence = do
   op3        <- allocateParty "Op3"
 
   proposalCid <- submit op1 do
-    createCmd VaultProposal with
-      allOperators = [op1, op2, op3]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "order-vault"
+    createCmd (mkProposal sigNetwork [op1, op2, op3] [op1] "order-vault")
 
   -- op3 signs first (out of list order) → Left (still waiting for op2)
   result1 <- submit op3 do
@@ -263,11 +240,7 @@ testProposalToDepositLifecycle = do
 
   -- Step 2: Propose vault with 2 operators
   proposalCid <- submit op1 do
-    createCmd VaultProposal with
-      allOperators = [op1, op2]; alreadySigned = [op1]; sigNetwork
-      evmVaultAddress = sampleVaultAddress
-      mpcResponseVerifyKey = testPubKeyHex
-      vaultId = "lifecycle-vault"
+    createCmd (mkProposal sigNetwork [op1, op2] [op1] "lifecycle-vault")
 
   -- Step 3: op2 signs → Vault created
   result <- submit op2 do
@@ -285,13 +258,7 @@ testProposalToDepositLifecycle = do
   -- Step 4: RequestDeposit through the proposal-created vault
   feeRegistrationCid <- mkVaultFeeInfra sigNetworkFA
   (signEventCid, pendingCid) <- submit (actAs requester <> readAs op1 <> readAs op2 <> readAs sigNetwork <> readAs sigNetworkFA) do
-    exerciseCmd vaultCid RequestDeposit with
-      requester; signerCid; path = partyToText requester
-      evmTxParams = sampleEvmType2Params
-      keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
-      outputDeserializationSchema = erc20BoolSchema
-      respondSerializationSchema = erc20BoolSchema
-      feeRegistrationCid; feeInputs = []; feeExtraArgs = noFeeExtras
+    exerciseCmd vaultCid (mkDepositArgs requester signerCid feeRegistrationCid (partyToText requester) sampleEvmType2Params)
 
   -- Verify deposit artifacts
   pending <- queryContractId requester pendingCid

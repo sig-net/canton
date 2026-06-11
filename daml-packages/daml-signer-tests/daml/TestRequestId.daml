@@ -1,12 +1,22 @@
 module TestRequestId where
 
-import DA.Crypto.Text (byteCount)
+import DA.Crypto.Text (BytesHex, byteCount)
 import Daml.Script
 
 import Eip712 (eip712EncodeString, eip712EncodeBytesArray)
+import EvmTypes (EvmType2TransactionParams)
 import TxParams (TxParams(..))
 import RequestId (hashEvmType2Params, computeRequestId, computeResponseHash, computeOperatorsHash)
 import TestFixtures (sampleAccessListParams, sampleContractCreationParams, sampleEthTransferParams, sampleEvmType2Params)
+
+-- Shared requestId inputs: a fixed two-operator predecessor and the canonical
+-- caip2/path/algo/dest/params used by every vector below.
+predecessorId : BytesHex
+predecessorId = computeOperatorsHash ["Operator1::1220aa", "Operator2::1220bb"]
+
+rid : EvmType2TransactionParams -> Int -> BytesHex
+rid params keyVersion =
+  computeRequestId predecessorId (EvmType2TxParams params) "eip155:11155111" keyVersion "m/44/60/0/0" "ECDSA" "ethereum" ""
 
 ------------------------------------------------------------------------
 -- eip712EncodeString
@@ -83,11 +93,8 @@ testOperatorsHash = do
 
 testRequestIdDeterministic : Script ()
 testRequestIdDeterministic = do
-  let predecessorId = computeOperatorsHash ["Operator1::1220aa", "Operator2::1220bb"]
-  let caip2Id = "eip155:11155111"
-  let path = "m/44/60/0/0"
-  let id1 = computeRequestId predecessorId (EvmType2TxParams sampleEvmType2Params) caip2Id 1 path "ECDSA" "ethereum" ""
-  let id2 = computeRequestId predecessorId (EvmType2TxParams sampleEvmType2Params) caip2Id 1 path "ECDSA" "ethereum" ""
+  let id1 = rid sampleEvmType2Params 1
+  let id2 = rid sampleEvmType2Params 1
   assertMsg "request_id must be deterministic" (id1 == id2)
   assertMsg ("request_id wrong length: " <> show (byteCount id1)) (byteCount id1 == 32)
 
@@ -97,10 +104,7 @@ testRequestIdDeterministic = do
 
 testResponseHash : Script ()
 testResponseHash = do
-  let predecessorId = computeOperatorsHash ["Operator1::1220aa", "Operator2::1220bb"]
-  let caip2Id = "eip155:11155111"
-  let path = "m/44/60/0/0"
-  let requestId = computeRequestId predecessorId (EvmType2TxParams sampleEvmType2Params) caip2Id 1 path "ECDSA" "ethereum" ""
+  let requestId = rid sampleEvmType2Params 1
   let output    = "00000000000000000000000000000000000000000000000000000000deadbeef"
   let hash1     = computeResponseHash requestId output
   let hash2     = computeResponseHash requestId output
@@ -115,10 +119,7 @@ testResponseHash = do
 
 testDomainSeparation : Script ()
 testDomainSeparation = do
-  let predecessorId = computeOperatorsHash ["Operator1::1220aa", "Operator2::1220bb"]
-  let caip2Id = "eip155:11155111"
-  let path = "m/44/60/0/0"
-  let requestId = computeRequestId predecessorId (EvmType2TxParams sampleEvmType2Params) caip2Id 1 path "ECDSA" "ethereum" ""
+  let requestId = rid sampleEvmType2Params 1
   let responseHash = computeResponseHash requestId "01"
   assertMsg "requestId != responseHash" (requestId /= responseHash)
 
@@ -132,15 +133,11 @@ testCrossLanguageVectors = do
     (hashEvmType2Params sampleEvmType2Params
       == "f1ea0b772bfe36491fe76c2e6dc01500d1d450bf69de3452d7e6db0356568dbf")
 
-  let predecessorId = computeOperatorsHash ["Operator1::1220aa", "Operator2::1220bb"]
-  let caip2Id = "eip155:11155111"
-  let path = "m/44/60/0/0"
-
-  let rid1 = computeRequestId predecessorId (EvmType2TxParams sampleEvmType2Params) caip2Id 1 path "ECDSA" "ethereum" ""
+  let rid1 = rid sampleEvmType2Params 1
   assertMsg "requestId(kv=1) matches TS"
     (rid1 == "af5de812ffd1408db82f32b543c1b92f973c4280d7456efa032c2ace9725e1e7")
 
-  let rid256 = computeRequestId predecessorId (EvmType2TxParams sampleEvmType2Params) caip2Id 256 path "ECDSA" "ethereum" ""
+  let rid256 = rid sampleEvmType2Params 256
   assertMsg "requestId(kv=256) matches TS"
     (rid256 == "d790759b0f32e12a2dce289a8a9caba39bfa7804dc8f39efab9480909e029457")
 
@@ -153,27 +150,27 @@ testCrossLanguageVectors = do
     (computeResponseHash knownId ""
       == "20ee8f1366f06926e9e8771d8fb9007a8537c8dfdb6a3f8c2cfd64db19d2ec90")
 
-  let rid0 = computeRequestId predecessorId (EvmType2TxParams sampleEvmType2Params) caip2Id 0 path "ECDSA" "ethereum" ""
+  let rid0 = rid sampleEvmType2Params 0
   assertMsg "requestId(kv=0) matches TS"
     (rid0 == "c78bad85eb84c149611f8dbc20e179e2001f0b703b8199b1a31c8feec653301d")
 
   assertMsg "hashEvmType2Params(plain ETH transfer) matches TS"
     (hashEvmType2Params sampleEthTransferParams
       == "772a96f61e790006aea0170ce80be388d26f929ddaa670088946ee26b0103f92")
-  let ridEthTransfer = computeRequestId predecessorId (EvmType2TxParams sampleEthTransferParams) caip2Id 1 path "ECDSA" "ethereum" ""
+  let ridEthTransfer = rid sampleEthTransferParams 1
   assertMsg "requestId(plain ETH transfer) matches TS"
     (ridEthTransfer == "10a0778a26f7eccfe5f3b987443ddf429a5cd246a5c0baf6c893fbdd0b66256c")
 
   assertMsg "hashEvmType2Params(access list) matches TS"
     (hashEvmType2Params sampleAccessListParams
       == "1958cd3129ac47587cc671edcd0dbee65fa18bca4c97e6c959a30d15ba9994e9")
-  let ridAccessList = computeRequestId predecessorId (EvmType2TxParams sampleAccessListParams) caip2Id 1 path "ECDSA" "ethereum" ""
+  let ridAccessList = rid sampleAccessListParams 1
   assertMsg "requestId(access list) matches TS"
     (ridAccessList == "a8b7453df8b0739b5a8ceb121ed6ffcda2230e92e703e814ca842ef3604aaadc")
 
   assertMsg "hashEvmType2Params(contract creation) matches TS"
     (hashEvmType2Params sampleContractCreationParams
       == "ea05c872b41f323538651c9661ebdc4404e4c934b548eb49c7f0ddbf6ba03667")
-  let ridContractCreation = computeRequestId predecessorId (EvmType2TxParams sampleContractCreationParams) caip2Id 1 path "ECDSA" "ethereum" ""
+  let ridContractCreation = rid sampleContractCreationParams 1
   assertMsg "requestId(contract creation) matches TS"
     (ridContractCreation == "79bf70f52ac4f67dcbfd2711bd72de792a899e4167fbdadba44bf6493d3b6ed6")
