@@ -370,6 +370,30 @@ testClaimRejectsBoolFalse = do
   claimDepositMustFail env pendingCid evidence
 
 ------------------------------------------------------------------------
+-- Forged pending anchor (self-signed, foreign operator set)
+------------------------------------------------------------------------
+
+-- The claim path never recomputes requestId from pending.evmTxParams, so a
+-- requester could otherwise mint a holding from attacker-chosen params by
+-- pairing a self-signed PendingDeposit (operators = [requester], copied
+-- requestId) with real evidence. The archive succeeds (the requester signed
+-- the forgery and controls the claim) — the "Operators mismatch" check is
+-- the only gate.
+testClaimRejectsPendingOperatorsMismatch : Script ()
+testClaimRejectsPendingOperatorsMismatch = do
+  env@VaultEnv{requester, sigNetwork} <- setupWithKey claimTestPubKey
+
+  signEventCid <- mkSignEvent env sampleEvmType2Params
+  evidence <- mkEvidence env claimTestRequestId boolTrueMpcOutput claimTestSignature
+
+  forgedPendingCid <- submit requester do
+    createCmd PendingDeposit with
+      operators = [requester]; requester; sigNetwork
+      requestId = claimTestRequestId; evmTxParams = sampleEvmType2Params; signEventCid
+
+  claimDepositMustFail env forgedPendingCid evidence
+
+------------------------------------------------------------------------
 -- Controller / validation negative tests
 ------------------------------------------------------------------------
 
@@ -671,6 +695,30 @@ testCompleteWithdrawalRejectsSignatureRespondedRequestIdMismatch = do
   -- only the SignatureRespondedEvent carries the foreign requestId
   respondedCid <- mkRespondedEvent env otherRequestIdB claimTestSignature
   completeWithdrawalMustFail env pendingCid (outcomeCid, respondedCid)
+
+------------------------------------------------------------------------
+-- Forged pending withdrawal (self-signed, foreign operator set)
+------------------------------------------------------------------------
+
+-- Withdrawal mirror of testClaimRejectsPendingOperatorsMismatch: with
+-- refund-shaped evidence, a self-signed PendingWithdrawal (copied requestId,
+-- attacker-chosen amount) would mint a refund holding — the "Operators
+-- mismatch" check is the only gate.
+testCompleteWithdrawalRejectsPendingOperatorsMismatch : Script ()
+testCompleteWithdrawalRejectsPendingOperatorsMismatch = do
+  env@VaultEnv{requester, sigNetwork} <- setupWithKey claimTestPubKey
+
+  signEventCid <- mkSignEvent env sampleWithdrawalEvmParams
+  evidence <- mkEvidence env claimTestRequestId errorPrefixMpcOutput refundTestSignature
+
+  forgedPendingCid <- submit requester do
+    createCmd PendingWithdrawal with
+      operators = [requester]; requester; sigNetwork
+      requestId = claimTestRequestId; evmTxParams = sampleWithdrawalEvmParams
+      erc20Address = sampleErc20Address; amount = sampleHoldingAmount
+      signEventCid
+
+  completeWithdrawalMustFail env forgedPendingCid evidence
 
 ------------------------------------------------------------------------
 -- CompleteWithdrawal with bool(false) MPC output returns refund
