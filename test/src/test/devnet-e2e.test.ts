@@ -633,7 +633,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
         undefined,
         [vaultDisclosure],
       );
-      const refund = (completeResult.transaction.events ?? []).find(
+      const refund = completeResult.transaction.events.find(
         (e) => "CreatedEvent" in e && e.CreatedEvent.templateId.includes("Erc20Holding"),
       );
       expect(refund).toBeUndefined();
