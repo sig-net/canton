@@ -489,23 +489,23 @@ testMulChecked = do
   -- No overflow: 3 * 7 = 21
   let (r1, o1) = uint256MulChecked (uint256FromHex three) (uint256FromHex seven)
   assertMsg "mulChecked 3*7 result" (uint256ToHex r1 == twentyOne)
-  assertMsg "mulChecked 3*7 no overflow" (o1 == False)
+  assertMsg "mulChecked 3*7 no overflow" (not o1)
   -- No overflow: 1e18 * 2
   let (r2, o2) = uint256MulChecked (uint256FromHex oneEth) (uint256FromHex two)
   assertMsg "mulChecked 1e18*2 result" (uint256ToHex r2 == twoEth)
-  assertMsg "mulChecked 1e18*2 no overflow" (o2 == False)
+  assertMsg "mulChecked 1e18*2 no overflow" (not o2)
   -- Overflow: 2^128 * 2^128 = 0 mod 2^256
   let (r3, o3) = uint256MulChecked (uint256FromHex pow128) (uint256FromHex pow128)
   assertMsg "mulChecked 2^128*2^128 result is zero" (r3 == uint256Zero)
-  assertMsg "mulChecked 2^128*2^128 overflows" (o3 == True)
+  assertMsg "mulChecked 2^128*2^128 overflows" o3
   -- Overflow: max * max = 1 mod 2^256
   let (r4, o4) = uint256MulChecked uint256Max uint256Max
   assertMsg "mulChecked max*max result is one" (uint256ToHex r4 == one)
-  assertMsg "mulChecked max*max overflows" (o4 == True)
+  assertMsg "mulChecked max*max overflows" o4
   -- Boundary: (2^128-1) * (2^128+1) = 2^256-1 = max (no overflow)
   let (r5, o5) = uint256MulChecked (uint256FromHex pow128MinusOne) (uint256FromHex pow128PlusOne)
   assertMsg "mulChecked (2^128-1)*(2^128+1) = max" (uint256ToHex r5 == maxVal)
-  assertMsg "mulChecked (2^128-1)*(2^128+1) no overflow" (o5 == False)
+  assertMsg "mulChecked (2^128-1)*(2^128+1) no overflow" (not o5)
 
 -- ---------------------------------------------------------------------------
 -- 24. Addition associativity

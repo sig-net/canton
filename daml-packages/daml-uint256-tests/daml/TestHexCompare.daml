@@ -3,6 +3,7 @@ module TestHexCompare where
 import Daml.Script
 import qualified DA.Text
 import DA.Crypto.Text (BytesHex, maxUInt256Hex)
+import DA.Exception (GeneralError(..))
 import HexCompare
 
 -- ---------------------------------------------------------------------------
@@ -156,11 +157,14 @@ testHexMaxUInt256 = do
 -- Tests: hexPadUint256 edge cases
 -- ---------------------------------------------------------------------------
 
+-- A uint256 cannot exceed 32 bytes; silent truncation would misinterpret the
+-- value, so overlong input must error instead.
 testHexPadUint256Overlong : Script ()
 testHexPadUint256Overlong = do
   let overlong = maxVal <> "ab"  -- 66 chars
-  assertMsg "overlong result is 64 chars" (DA.Text.length (hexPadUint256 overlong) == 64)
-  assertMsg "overlong takes first 64 chars" (hexPadUint256 overlong == maxVal)
+  caught <- try (pure (hexPadUint256 overlong))
+    catch (GeneralError _) -> pure "caught"
+  assertMsg "overlong input rejected" (caught == "caught")
 
 testHexPadUint256Exact : Script ()
 testHexPadUint256Exact = do

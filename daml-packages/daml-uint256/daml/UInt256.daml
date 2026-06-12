@@ -117,6 +117,7 @@ clampL9 ls = take 9 ls <> [listGet ls 9 % topLimbMod]
 
 -- | Parse a BytesHex string (up to 64 hex chars) into a UInt256.
 -- Handles short inputs, odd-length, and mixed case.
+-- Errors (via hexPadUint256) on input longer than 64 hex chars.
 uint256FromHex : BytesHex -> UInt256
 uint256FromHex hex =
   let padded = hexPadUint256 (DA.Text.asciiToLower hex)  -- normalize to 64 lowercase chars

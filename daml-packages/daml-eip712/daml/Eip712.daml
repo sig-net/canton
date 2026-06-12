@@ -66,8 +66,10 @@ eip712EncodeAddress : BytesHex -> BytesHex
 eip712EncodeAddress hex = padLeft hex 32
 
 -- | EIP-712 bytes[] encoding: keccak256(concat(map keccak256 items)).
+-- Elements go through safeKeccak256 so empty bytes hash to keccak256("")
+-- as EIP-712 requires (the builtin keccak256 errors on empty input).
 eip712EncodeBytesArray : [BytesHex] -> BytesHex
-eip712EncodeBytesArray xs = safeKeccak256 (foldl (<>) "" (map keccak256 xs))
+eip712EncodeBytesArray xs = safeKeccak256 (foldl (<>) "" (map safeKeccak256 xs))
 
 -- | EIP-712 bytes encoding: keccak256(raw bytes).
 eip712EncodeBytes : BytesHex -> BytesHex

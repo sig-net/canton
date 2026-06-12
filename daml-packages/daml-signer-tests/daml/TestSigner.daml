@@ -1,6 +1,6 @@
 module TestSigner where
 
-import DA.Optional (fromSome)
+import DA.Optional (fromSome, isNone)
 import Daml.Script
 
 import Signer (Signer(..), SignerProposal(..), AcceptSigner(..), RequestSignature(..), Respond(..), RespondBidirectional(..), SignBidirectionalEvent(..), SignatureRespondedEvent, RespondBidirectionalEvent, Consume_SignBidirectional(..), Consume_SignatureResponded(..), Consume_RespondBidirectional(..), requestIdFromSignEvent)
@@ -395,7 +395,7 @@ testConsumeSignBidirectionalByOperator = do
     exerciseCmd signEventCid Consume_SignBidirectional with actor = operator
 
   archived <- queryContractId operator signEventCid
-  assertMsg "sign event archived" (archived == None)
+  assertMsg "sign event archived" (isNone archived)
 
 -- requester can retire the sign event (actor == requester)
 testConsumeSignBidirectionalByRequester : Script ()
