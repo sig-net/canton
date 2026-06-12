@@ -146,7 +146,7 @@ export class CantonClient {
       }
       throw new Error(`allocateParty failed: ${msg}`);
     }
-    const party = result.data.partyDetails?.party;
+    const party = result.data.partyDetails.party;
     if (!party) throw new Error("allocateParty: unexpected empty response");
     return party;
   }
@@ -161,7 +161,7 @@ export class CantonClient {
    */
   private async findPartyByHint(hint: string): Promise<string | undefined> {
     const { data } = await this.client.GET("/v2/parties");
-    const match = data?.partyDetails?.find((p) => p.party.startsWith(`${hint}::`));
+    const match = data?.partyDetails.find((p) => p.party.startsWith(`${hint}::`));
     return match?.party ?? undefined;
   }
 
@@ -455,7 +455,9 @@ export class CantonClient {
    * @see {@link https://docs.digitalasset.com/build/3.4/reference/json-api/openapi.html | GET /v2/state/ledger-end}
    */
   async getLedgerEnd(): Promise<number> {
-    return unwrap("getLedgerEnd", await this.client.GET("/v2/state/ledger-end")).offset;
+    const { offset } = unwrap("getLedgerEnd", await this.client.GET("/v2/state/ledger-end"));
+    if (offset === undefined) throw new Error("getLedgerEnd: response missing offset");
+    return offset;
   }
 
   /**
@@ -510,7 +512,7 @@ export class CantonClient {
     );
 
     return data.flatMap((item) =>
-      "JsActiveContract" in item.contractEntry
+      item.contractEntry && "JsActiveContract" in item.contractEntry
         ? [
             {
               createdEvent: item.contractEntry.JsActiveContract.createdEvent,
