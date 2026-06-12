@@ -95,7 +95,7 @@ cd cn-quickstart
 direnv allow
 ```
 
-The first `direnv allow` downloads the full Nix dev shell (JDK 21, Node 20/22, Gradle, Daml SDK 3.4.11, gcloud SDK, TypeScript, yq, etc.). Takes a few minutes the first time — subsequent activations are instant.
+The first `direnv allow` downloads the full Nix dev shell (JDK 21, Node 20/22, Gradle, Daml SDK, gcloud SDK, TypeScript, yq, etc.). Takes a few minutes the first time — subsequent activations are instant.
 
 ### 2. Configure the environment
 

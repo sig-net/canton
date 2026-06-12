@@ -37,6 +37,6 @@ For a local loop (an MPC node against a local sandbox), see `TEST_LOCALLY.md` (R
 
 ## Project layout
 
-- `daml-packages/` -- Daml source packages (`daml-signer` + `daml-vault` DARs, plus shared libs)
+- `daml-packages/` -- Daml source packages: `daml-signer` + `daml-vault`, the CC fee layer (`signet-api-fee-v1`, `signet-fee-amulet`), shared libs (`daml-abi`, `daml-eip712`, `daml-uint256`), their `*-tests` packages, and vendored splice token-standard DARs (`vendor/`)
 - `ts-packages/` -- TypeScript client packages (`canton-sig`)
 - `test/` -- DevNet e2e + co-located unit tests

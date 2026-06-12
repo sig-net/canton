@@ -26,9 +26,9 @@ Per-package details live in the documents listed under [Where to start](#where-t
 
 | Tool           | Version | Install                                                           |
 | -------------- | ------- | ----------------------------------------------------------------- |
-| Java           | 21+     | [Temurin](https://adoptium.net/)                                  |
+| Java           | 17+     | [Temurin](https://adoptium.net/)                                  |
 | Daml SDK (DPM) | 3.5.1   | `curl -sSL https://get.digitalasset.com/install/install.sh \| sh` |
-| Node.js        | 24+     | [nodejs.org](https://nodejs.org/)                                 |
+| Node.js        | 22+     | [nodejs.org](https://nodejs.org/)                                 |
 | pnpm           | 10+     | `corepack enable && corepack prepare pnpm@latest --activate`      |
 
 After installing DPM, make sure `~/.dpm/bin` is on your `PATH`. The DevNet e2e test reads its `MPC_CANTON_*` + funding configuration from `test/.env`; see `test/.env.example` for all variables.
@@ -84,7 +84,7 @@ cd test
 cp .env.example .env
 ```
 
-Fill in the `MPC_CANTON_*` values (DevNet JSON API URL, OIDC credentials, party id, the Signer + Vault contract/template ids, the MPC root public key), plus `MPC_CANTON_ETH_RPC_URL` (the DevNet EVM node) and `FAUCET_PRIVATE_KEY` (funds the derived deposit/vault addresses). See `test/.env.example` for the full list.
+Fill in the `MPC_CANTON_*` values (DevNet JSON API URL, OIDC credentials, party id, the Signer + Vault contract/template ids, the MPC root public key, the CC registry URL for the signature fee), plus `MPC_CANTON_ETH_RPC_URL` (the DevNet EVM node) and `FAUCET_PRIVATE_KEY` (funds the derived deposit/vault addresses). See `test/.env.example` for the full list.
 
 > The Vault hardcodes `caip2 = eip155:1` (test mode); the MPC accepts only that caip2. caip2 is decoupled from the EVM chainId, so the test signs with the **Sepolia chainId (11155111)** and broadcasts to `MPC_CANTON_ETH_RPC_URL`, which the MPC's `eip155:1` indexer watches. This split is a Sepolia-devnet workaround — on mainnet it's unnecessary, since the chain is genuinely `eip155:1`.
 

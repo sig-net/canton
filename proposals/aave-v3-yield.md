@@ -311,7 +311,7 @@ data TxSource
 ```
 
 No `AavePosition` template. Both USDC and stataUSDC are tracked as
-`Erc20Holding` with different `erc20Contract` addresses.
+`Erc20Holding` with different `erc20Address` addresses.
 
 ### New Choices on VaultOrchestrator
 
@@ -458,7 +458,7 @@ nonconsuming choice ClaimAaveSupply : ContractId Erc20Holding
     create Erc20Holding with
       owner = requester
       amount = sharesOut           -- shares, not underlying — never stale
-      erc20Contract = stataToken   -- stataUSDC address
+      erc20Address = stataToken   -- stataUSDC address
       ..
 ```
 
@@ -538,7 +538,7 @@ nonconsuming choice CompleteAaveWithdraw
       holdingCid <- create Erc20Holding with
         owner = requester
         amount = assetsOut          -- includes accrued yield
-        erc20Contract = underlying  -- back to USDC
+        erc20Address = underlying  -- back to USDC
         ..
       pure (Some holdingCid)
 ```
@@ -582,7 +582,7 @@ support rebasing tokens and yield would be permanently lost.
 4. Wait for MPC to sign + submit deposit tx
 5. Exercise `ClaimAaveSupply`
 6. Assert: `Erc20Holding(stataUSDC)` created with shares > 0
-7. Assert: `erc20Contract` == stataToken address
+7. Assert: `erc20Address` == stataToken address
 8. Verify on Sepolia: user's derived address has stataUSDC balance > 0
 
 **Test 2: Withdraw from Aave with yield (300s):**
