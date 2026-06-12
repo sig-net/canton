@@ -28,7 +28,7 @@ Both `RequestDeposit` and `RequestWithdrawal` also take the three CC signature-f
 `Signer.RequestSignature`, which charges the fee atomically through the registered late-bound
 `FeeCollector`. The requester sources them client-side (see `canton-sig`'s fee helpers) and
 attaches the matching disclosures; if the fee can't settle, `RequestSignature` aborts and nothing
-is created. See [daml-signer § CC signature fee](../daml-signer/README.md#cc-signature-fee).
+is created. See [daml-signer § CC signature fee](../daml-signer/FEE.md).
 
 Both choices also pin `caip2Id = "eip155:1"` (test mode — the MPC indexer accepts only that
 caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself targets Sepolia.
