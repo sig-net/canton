@@ -18,13 +18,13 @@ Sepolia, giving us shares-based yield tracking.
 ### Per-User Derived Addresses (not shared root)
 
 Each Canton user already has their own derived Ethereum address via the MPC
-path mechanism (`path = "{sender},{userPath}"`). Instead of pooling all
-tokens into a single vault root address, each user's derived address
+path mechanism (`path = "{vaultId},{requester},{userPath}"`). Instead of pooling
+all tokens into a single vault root address, each user's derived address
 interacts with Aave independently:
 
 ```
-Alice: path = "Alice,deposit-1" → 0xABC...  (unique ETH address)
-Bob:   path = "Bob,deposit-1"   → 0xDEF...  (unique ETH address)
+Alice: path = "vault-1,Alice,deposit-1" → 0xABC...  (unique ETH address)
+Bob:   path = "vault-1,Bob,deposit-1"   → 0xDEF...  (unique ETH address)
 
 Alice's 0xABC → supply 100 USDC → Aave tracks balanceOf(0xABC) independently
 Bob's   0xDEF → supply 200 USDC → Aave tracks balanceOf(0xDEF) independently
@@ -103,7 +103,7 @@ Factory lookup: `getStaticAToken(underlying)` (NOT `getStataToken`).
 ### Approve (one-time setup)
 
 ```
- User                           Canton (VaultOrchestrator)     MPC Service                    Sepolia
+ User                           Canton (Vault)                 MPC Service                    Sepolia
  |                              |                              |                              |
  | (user already has Erc20Holding(USDC) from prior deposit)    |                              |
  |                              |                              |                              |
@@ -118,11 +118,11 @@ Factory lookup: `getStaticAToken(underlying)` (NOT `getStataToken`).
  |                              |                              |----------------------------->|
  |                              |                              |       USDC.approve(stata,max)|
  |                              |                              |<-----------------------------|
- |                              | SignEvmTx                    |                              |
- |                              |<----- EcdsaSignature --------|                              |
+ |                              | Respond                      |                              |
+ |                              |<-- SignatureRespondedEvent --|                              |
  |                              |                              | re-simulate, extract output  |
- |                              | ProvideEvmOutcomeSig         |                              |
- |                              |<-- EvmTxOutcomeSignature ----|                              |
+ |                              | RespondBidirectional         |                              |
+ |                              |<-- RespondBidirectionalEvent |                              |
  |                              |                              |                              |
  | 2. ClaimEvmApprove           |                              |                              |
  |----------------------------->|                              |                              |
@@ -135,7 +135,7 @@ Factory lookup: `getStaticAToken(underlying)` (NOT `getStataToken`).
 ### Supply (USDC → stataUSDC)
 
 ```
- User                           Canton (VaultOrchestrator)     MPC Service                    Sepolia
+ User                           Canton (Vault)                 MPC Service                    Sepolia
  |                              |                              |                              |
  | 3. RequestAaveSupply         |                              |                              |
  |    (holdingCid, stataToken)  |                              |                              |
@@ -152,12 +152,12 @@ Factory lookup: `getStaticAToken(underlying)` (NOT `getStataToken`).
  |                              |                              |     USDC → Pool.supply()     |
  |                              |                              |     aUSDC → wrap → stataUSDC |
  |                              |                              |<-----------------------------|
- |                              | SignEvmTx                    |                              |
- |                              |<----- EcdsaSignature --------|                              |
+ |                              | Respond                      |                              |
+ |                              |<-- SignatureRespondedEvent --|                              |
  |                              |                              | re-simulate, extract shares  |
- |                              | ProvideEvmOutcomeSig         |                              |
- |                              |<-- EvmTxOutcomeSignature ----|                              |
- |                              |     (mpcOutput = sharesOut)  |                              |
+ |                              | RespondBidirectional         |                              |
+ |                              |<-- RespondBidirectionalEvent |                              |
+ |                              | (serializedOutput=sharesOut) |                              |
  |                              |                              |                              |
  | 4. ClaimAaveSupply           |                              |                              |
  |----------------------------->|                              |                              |
@@ -176,7 +176,7 @@ Factory lookup: `getStaticAToken(underlying)` (NOT `getStataToken`).
 ### Withdraw (stataUSDC → USDC + yield)
 
 ```
- User                           Canton (VaultOrchestrator)     MPC Service                    Sepolia
+ User                           Canton (Vault)                 MPC Service                    Sepolia
  |                              |                              |                              |
  | 5. RequestAaveWithdraw       |                              |                              |
  |    (holdingCid)              |                              |                              |
@@ -194,12 +194,12 @@ Factory lookup: `getStaticAToken(underlying)` (NOT `getStataToken`).
  |                              |                              |     Pool.withdraw() → USDC   |
  |                              |                              |     (includes accrued yield) |
  |                              |                              |<-----------------------------|
- |                              | SignEvmTx                    |                              |
- |                              |<----- EcdsaSignature --------|                              |
+ |                              | Respond                      |                              |
+ |                              |<-- SignatureRespondedEvent --|                              |
  |                              |                              | re-simulate, extract assets  |
- |                              | ProvideEvmOutcomeSig         |                              |
- |                              |<-- EvmTxOutcomeSignature ----|                              |
- |                              |     (mpcOutput = assetsOut)  |                              |
+ |                              | RespondBidirectional         |                              |
+ |                              |<-- RespondBidirectionalEvent |                              |
+ |                              | (serializedOutput=assetsOut) |                              |
  |                              |                              |                              |
  | 6. CompleteAaveWithdraw      |                              |                              |
  |----------------------------->|                              |                              |
@@ -221,14 +221,14 @@ function approve(address spender, uint256 amount) returns (bool)
 selector: 0x095ea7b3
 ```
 
-**EvmTransactionParams:**
+**`EvmType2TransactionParams` calldata layout:**
 
-| Field               | Value                                                                            |
+| Field / slot        | Value                                                                            |
 | ------------------- | -------------------------------------------------------------------------------- |
 | `to`                | USDC token address                                                               |
-| `functionSignature` | `"approve(address,uint256)"`                                                     |
-| `args[0]`           | stataToken address, left-padded to 32 bytes                                      |
-| `args[1]`           | `ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` (max uint256) |
+| selector source     | `"approve(address,uint256)"`                                                     |
+| arg slot 0          | stataToken address, left-padded to 32 bytes                                      |
+| arg slot 1          | `ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` (max uint256) |
 | `value`             | `00..00` (32 bytes zero)                                                         |
 
 **Schema:** `outputDeserializationSchema = [{"name":"","type":"bool"}]`
@@ -248,16 +248,16 @@ With `depositToAave = true`, the contract:
 3. Wraps the resulting aUSDC into stataUSDC shares
 4. Mints shares to `receiver`
 
-**EvmTransactionParams:**
+**`EvmType2TransactionParams` calldata layout:**
 
-| Field               | Value                                                             |
+| Field / slot        | Value                                                             |
 | ------------------- | ----------------------------------------------------------------- |
 | `to`                | `8a88124522dbbf1e56352ba3de1d9f78c143751e` (stataUSDC on Sepolia) |
-| `functionSignature` | `"deposit(uint256,address,uint16,bool)"`                          |
-| `args[0]`           | amount of USDC, left-padded to 32 bytes                           |
-| `args[1]`           | receiver = user's derived address, left-padded                    |
-| `args[2]`           | `00..00` (referralCode = 0)                                       |
-| `args[3]`           | `00..01` (depositToAave = true)                                   |
+| selector source     | `"deposit(uint256,address,uint16,bool)"`                          |
+| arg slot 0          | amount of USDC, left-padded to 32 bytes                           |
+| arg slot 1          | receiver = user's derived address, left-padded                    |
+| arg slot 2          | `00..00` (referralCode = 0)                                       |
+| arg slot 3          | `00..01` (depositToAave = true)                                   |
 | `value`             | `00..00` (32 bytes zero)                                          |
 
 **Schema:** `outputDeserializationSchema = [{"name":"shares","type":"uint256"}]`
@@ -273,16 +273,16 @@ function redeem(uint256 shares, address receiver, address owner, bool withdrawFr
 With `withdrawFromAave = true`, the contract burns shares, calls
 `Pool.withdraw()` internally, and returns raw USDC. No separate step.
 
-**EvmTransactionParams:**
+**`EvmType2TransactionParams` calldata layout:**
 
-| Field               | Value                                                             |
+| Field / slot        | Value                                                             |
 | ------------------- | ----------------------------------------------------------------- |
 | `to`                | `8a88124522dbbf1e56352ba3de1d9f78c143751e` (stataUSDC on Sepolia) |
-| `functionSignature` | `"redeem(uint256,address,address,bool)"`                          |
-| `args[0]`           | shares amount (= `Erc20Holding.amount`), 32 bytes                 |
-| `args[1]`           | receiver = user's derived address, left-padded                    |
-| `args[2]`           | owner = user's derived address, left-padded                       |
-| `args[3]`           | `00..01` (withdrawFromAave = true)                                |
+| selector source     | `"redeem(uint256,address,address,bool)"`                          |
+| arg slot 0          | shares amount (= `Erc20Holding.amount`), 32 bytes                 |
+| arg slot 1          | receiver = user's derived address, left-padded                    |
+| arg slot 2          | owner = user's derived address, left-padded                       |
+| arg slot 3          | `00..01` (withdrawFromAave = true)                                |
 | `value`             | `00..00` (32 bytes zero)                                          |
 
 **Schema:** `outputDeserializationSchema = [{"name":"assets","type":"uint256"}]`
@@ -299,9 +299,10 @@ With `withdrawFromAave = true`, the contract burns shares, calls
 
 ## Daml Contract Changes
 
-### New TxSource Variants
+### New TxSource Type
 
 ```daml
+-- new type — current code anchors flows in separate PendingDeposit/PendingWithdrawal templates
 data TxSource
   = DepositSource (ContractId DepositAuthorization)
   | WithdrawalSource (ContractId Erc20Holding)
@@ -313,7 +314,7 @@ data TxSource
 No `AavePosition` template. Both USDC and stataUSDC are tracked as
 `Erc20Holding` with different `erc20Address` addresses.
 
-### New Choices on VaultOrchestrator
+### New Choices on Vault
 
 #### RequestEvmApprove (nonconsuming, issuer-controlled)
 
@@ -323,26 +324,28 @@ protocol integrations.
 ```daml
 nonconsuming choice RequestEvmApprove : ContractId PendingEvmTx
   with
-    token   : BytesHex    -- ERC-20 contract address
-    spender : BytesHex    -- protocol contract to approve
-    evmParams : EvmTransactionParams
+    token       : BytesHex    -- ERC-20 contract address
+    spender     : BytesHex    -- protocol contract to approve
+    signerCid   : ContractId Signer
+    evmTxParams : EvmType2TransactionParams
   controller issuer
   do
     assertMsg "must be approve" $
-      evmParams.functionSignature == "approve(address,uint256)"
+      abiSelectorMatches "approve(address,uint256)" evmTxParams.calldata
     assertMsg "to must be token" $
-      evmParams.to == token
+      evmTxParams.to == Some token
 
-    let requestPath = "root"
-        predecessorId = vaultId <> show issuer
-        requestId = computeRequestId
-          (show issuer) evmParams caip2Id keyVersion
-          requestPath algo (show spender) ""
+    -- Signer.RequestSignature charges the CC fee, sets sender = operators hash,
+    -- and emits the SignBidirectionalEvent the MPC watches
+    let requestPath = vaultId <> ",root"
+    signEventCid <- exercise signerCid RequestSignature with
+      txParams = EvmType2TxParams evmTxParams; path = requestPath; ..
+    signEvent <- fetch signEventCid
+    let requestId = requestIdFromSignEvent signEvent
 
     create PendingEvmTx with
       source = ApproveSource
       path = requestPath
-      nonceCidText = ""
       outputDeserializationSchema = "[{\"name\":\"\",\"type\":\"bool\"}]"
       respondSerializationSchema = "[{\"name\":\"\",\"type\":\"bool\"}]"
       ..
@@ -353,27 +356,29 @@ nonconsuming choice RequestEvmApprove : ContractId PendingEvmTx
 ```daml
 nonconsuming choice ClaimEvmApprove : ()
   with
-    requester    : Party
-    pendingCid   : ContractId PendingEvmTx
-    outcomeCid   : ContractId EvmTxOutcomeSignature
-    signatureCid : ContractId EcdsaSignature
+    requester                    : Party
+    pendingCid                   : ContractId PendingEvmTx
+    respondBidirectionalEventCid : ContractId RespondBidirectionalEvent
+    signatureRespondedEventCid   : ContractId SignatureRespondedEvent
   controller requester
   do
     pending <- fetch pendingCid
-    outcome <- fetch outcomeCid
+    outcome <- fetch respondBidirectionalEventCid
 
     assertMsg "requestId mismatch" $ pending.requestId == outcome.requestId
-    let responseHash = computeResponseHash pending.requestId outcome.mpcOutput
+    let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
     assertMsg "invalid MPC signature" $
-      verifyEcdsaSignature mpcPublicKey responseHash outcome.signature
+      secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash
+        mpcResponseVerifyKey
 
-    assertMsg "approve failed" $ not (hasErrorPrefix outcome.mpcOutput)
-    let decoded = abiDecodeBool outcome.mpcOutput 0
+    assertMsg "approve failed" $ not (abiHasErrorPrefix outcome.serializedOutput)
+    let decoded = abiDecodeBool outcome.serializedOutput 0
     assertMsg "approve returned false" decoded
 
     archive pendingCid
-    archive outcomeCid
-    archive signatureCid
+    exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
+    exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
+    exercise pending.signEventCid Consume_SignBidirectional with actor = requester
 ```
 
 #### RequestAaveSupply (nonconsuming)
@@ -384,34 +389,34 @@ position via their derived address.
 ```daml
 nonconsuming choice RequestAaveSupply : ContractId PendingEvmTx
   with
-    requester     : Party
-    holdingCid    : ContractId Erc20Holding
-    stataToken    : BytesHex   -- stataUSDC contract address
-    evmParams     : EvmTransactionParams
+    requester   : Party
+    signerCid   : ContractId Signer
+    holdingCid  : ContractId Erc20Holding
+    stataToken  : BytesHex   -- stataUSDC contract address
+    evmTxParams : EvmType2TransactionParams
   controller requester
   do
     holding <- fetch holdingCid
 
     assertMsg "owner mismatch" $ holding.owner == requester
-    assertMsg "issuer mismatch" $ holding.issuer == issuer
+    assertMsg "operators mismatch" $ sameOperatorSet holding.operators operators
     assertMsg "must be deposit" $
-      evmParams.functionSignature == "deposit(uint256,address,uint16,bool)"
-    assertMsg "to must be stataToken" $ evmParams.to == stataToken
+      abiSelectorMatches "deposit(uint256,address,uint16,bool)" evmTxParams.calldata
+    assertMsg "to must be stataToken" $ evmTxParams.to == Some stataToken
 
     -- validate amount matches holding
-    let argsAmount = evmParams.args !! 0
+    let argSlots = abiStripSelector evmTxParams.calldata
     assertMsg "amount must match holding" $
-      argsAmount == holding.amount
+      abiDecodeUint argSlots 0 == holding.amount
 
     archive holdingCid
 
     -- use the user's deposit path (per-user derived address)
-    let requestPath = show requester <> "," <> "aave-supply"
-        predecessorId = vaultId <> show issuer
-        nonceCidText = show holdingCid
-        requestId = computeRequestId
-          (show requester) evmParams caip2Id keyVersion
-          requestPath algo (show stataToken) nonceCidText
+    let requestPath = vaultId <> "," <> partyToText requester <> ",aave-supply"
+    signEventCid <- exercise signerCid RequestSignature with
+      txParams = EvmType2TxParams evmTxParams; path = requestPath; ..
+    signEvent <- fetch signEventCid
+    let requestId = requestIdFromSignEvent signEvent
 
     create PendingEvmTx with
       source = AaveSupplySource holdingCid
@@ -431,35 +436,37 @@ forever since shares don't rebase.
 ```daml
 nonconsuming choice ClaimAaveSupply : ContractId Erc20Holding
   with
-    requester    : Party
-    pendingCid   : ContractId PendingEvmTx
-    outcomeCid   : ContractId EvmTxOutcomeSignature
-    signatureCid : ContractId EcdsaSignature
+    requester                    : Party
+    pendingCid                   : ContractId PendingEvmTx
+    respondBidirectionalEventCid : ContractId RespondBidirectionalEvent
+    signatureRespondedEventCid   : ContractId SignatureRespondedEvent
   controller requester
   do
     pending <- fetch pendingCid
-    outcome <- fetch outcomeCid
+    outcome <- fetch respondBidirectionalEventCid
 
     assertMsg "requestId mismatch" $ pending.requestId == outcome.requestId
-    let responseHash = computeResponseHash pending.requestId outcome.mpcOutput
+    let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
     assertMsg "invalid MPC signature" $
-      verifyEcdsaSignature mpcPublicKey responseHash outcome.signature
+      secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash
+        mpcResponseVerifyKey
 
-    assertMsg "supply failed" $ not (hasErrorPrefix outcome.mpcOutput)
+    assertMsg "supply failed" $ not (abiHasErrorPrefix outcome.serializedOutput)
 
     -- decode shares minted (ERC-4626 deposit returns uint256 shares)
-    let sharesOut = abiSlot outcome.mpcOutput 0
-        stataToken = pending.evmParams.to
+    let sharesOut = abiDecodeUint outcome.serializedOutput 0
+        stataToken = fromSome pending.evmTxParams.to
 
     archive pendingCid
-    archive outcomeCid
-    archive signatureCid
+    exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
+    exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
+    exercise pending.signEventCid Consume_SignBidirectional with actor = requester
 
     create Erc20Holding with
+      operators
       owner = requester
-      amount = sharesOut           -- shares, not underlying — never stale
+      amount = sharesOut          -- shares, not underlying — never stale
       erc20Address = stataToken   -- stataUSDC address
-      ..
 ```
 
 #### RequestAaveWithdraw (nonconsuming)
@@ -470,29 +477,30 @@ Consumes `Erc20Holding(stataUSDC)`, redeems all shares.
 nonconsuming choice RequestAaveWithdraw : ContractId PendingEvmTx
   with
     requester   : Party
+    signerCid   : ContractId Signer
     holdingCid  : ContractId Erc20Holding
-    evmParams   : EvmTransactionParams
+    evmTxParams : EvmType2TransactionParams
   controller requester
   do
     holding <- fetch holdingCid
 
     assertMsg "owner mismatch" $ holding.owner == requester
+    assertMsg "operators mismatch" $ sameOperatorSet holding.operators operators
     assertMsg "must be redeem" $
-      evmParams.functionSignature == "redeem(uint256,address,address,bool)"
+      abiSelectorMatches "redeem(uint256,address,address,bool)" evmTxParams.calldata
 
     -- validate shares amount matches holding
-    let argsShares = evmParams.args !! 0
+    let argSlots = abiStripSelector evmTxParams.calldata
     assertMsg "shares must match holding" $
-      argsShares == holding.amount
+      abiDecodeUint argSlots 0 == holding.amount
 
     archive holdingCid
 
-    let requestPath = show requester <> "," <> "aave-supply"
-        nonceCidText = show holdingCid
-        stataToken = evmParams.to
-        requestId = computeRequestId
-          (show requester) evmParams caip2Id keyVersion
-          requestPath algo (show stataToken) nonceCidText
+    let requestPath = vaultId <> "," <> partyToText requester <> ",aave-supply"
+    signEventCid <- exercise signerCid RequestSignature with
+      txParams = EvmType2TxParams evmTxParams; path = requestPath; ..
+    signEvent <- fetch signEventCid
+    let requestId = requestIdFromSignEvent signEvent
 
     create PendingEvmTx with
       source = AaveWithdrawSource holdingCid
@@ -510,44 +518,46 @@ nonconsuming choice RequestAaveWithdraw : ContractId PendingEvmTx
 nonconsuming choice CompleteAaveWithdraw
     : Optional (ContractId Erc20Holding)
   with
-    requester    : Party
-    underlying   : BytesHex   -- USDC contract address
-    pendingCid   : ContractId PendingEvmTx
-    outcomeCid   : ContractId EvmTxOutcomeSignature
-    signatureCid : ContractId EcdsaSignature
+    requester                    : Party
+    underlying                   : BytesHex   -- USDC contract address
+    pendingCid                   : ContractId PendingEvmTx
+    respondBidirectionalEventCid : ContractId RespondBidirectionalEvent
+    signatureRespondedEventCid   : ContractId SignatureRespondedEvent
   controller requester
   do
     pending <- fetch pendingCid
-    outcome <- fetch outcomeCid
+    outcome <- fetch respondBidirectionalEventCid
 
     assertMsg "requestId mismatch" $ pending.requestId == outcome.requestId
-    let responseHash = computeResponseHash pending.requestId outcome.mpcOutput
+    let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
     assertMsg "invalid MPC signature" $
-      verifyEcdsaSignature mpcPublicKey responseHash outcome.signature
+      secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash
+        mpcResponseVerifyKey
 
     archive pendingCid
-    archive outcomeCid
-    archive signatureCid
+    exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
+    exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
+    exercise pending.signEventCid Consume_SignBidirectional with actor = requester
 
-    if hasErrorPrefix outcome.mpcOutput then
+    if abiHasErrorPrefix outcome.serializedOutput then
       pure None  -- redeem failed, no refund (shares already burned on-chain)
     else do
       -- decode actual assets returned (underlying + yield)
-      let assetsOut = abiSlot outcome.mpcOutput 0
+      let assetsOut = abiDecodeUint outcome.serializedOutput 0
 
       holdingCid <- create Erc20Holding with
+        operators
         owner = requester
-        amount = assetsOut          -- includes accrued yield
+        amount = assetsOut         -- includes accrued yield
         erc20Address = underlying  -- back to USDC
-        ..
       pure (Some holdingCid)
 ```
 
 ## MPC Service Changes
 
 **None.** The existing MPC service pipeline is fully generic — it processes
-any `PendingEvmTx` regardless of function signature. The path-based key
-derivation already works for per-user addresses.
+any `SignBidirectionalEvent` regardless of function signature. The path-based
+key derivation already works for per-user addresses.
 
 ## Composability
 
@@ -567,7 +577,7 @@ support rebasing tokens and yield would be permanently lost.
 
 **Setup (beforeAll, 60s):**
 
-1. `setupVault()` — allocate parties, upload DAR, create VaultOrchestrator
+1. `setupVault()` — allocate parties, upload DAR, create Vault
 2. Fund user's derived address with test USDC from Aave faucet
 3. Start MPC server
 4. Execute `RequestEvmApprove` for USDC → stataToken (max uint256)
@@ -577,7 +587,7 @@ support rebasing tokens and yield would be permanently lost.
 **Test 1: Supply USDC to Aave via stataToken (300s):**
 
 1. Create `Erc20Holding(USDC)` via standard deposit flow
-2. Build `EvmTransactionParams` for `stataToken.deposit(amount, addr, 0, true)`
+2. Build `EvmType2TransactionParams` calldata for `stataToken.deposit(amount, addr, 0, true)`
 3. Exercise `RequestAaveSupply` with holding
 4. Wait for MPC to sign + submit deposit tx
 5. Exercise `ClaimAaveSupply`
@@ -783,7 +793,7 @@ Reserve address rotation for key compromise scenarios only.
 
 **Canton enforcement pattern:**
 
-1. `RequestEvmWithdrawal` should require that no active `Erc20Approval`
+1. `RequestWithdrawal` should require that no active `Erc20Approval`
    contracts exist for the holding's token + owner. The caller passes
    `activeApprovals : [ContractId Erc20Approval]` and Canton asserts it's
    empty. If the user wants to withdraw, they must revoke all approvals
@@ -925,12 +935,12 @@ Phase 4: Exit
 - **Canton trading is off-chain** → P2P swaps are just Daml contract updates
 - **DeFi happens at user's address** → approvals are isolated per-user
 - **Existing deposit/withdrawal flow already does this** — the custody
-  sweep is the same `transfer` + `ClaimEvmDeposit` pattern
+  sweep is the same `transfer` + `ClaimDeposit` pattern
 
 #### New Choice: `RequestCustodySweep`
 
 Transfers any ERC-20 from the user's DeFi address to the vault. Identical
-to `RequestEvmDeposit` but for arbitrary tokens (not just the original
+to `RequestDeposit` but for arbitrary tokens (not just the original
 deposit token).
 
 ```daml
@@ -939,20 +949,20 @@ nonconsuming choice RequestCustodySweep : ContractId PendingEvmTx
     requester    : Party
     tokenAddress : BytesHex    -- any ERC-20 (stataUSDC, WETH, etc.)
     amount       : BytesHex
-    evmParams    : EvmTransactionParams
+    evmTxParams  : EvmType2TransactionParams
   controller requester
   do
     assertMsg "must be transfer" $
-      evmParams.functionSignature == "transfer(address,uint256)"
+      abiSelectorMatches "transfer(address,uint256)" evmTxParams.calldata
     -- validate recipient is the vault address
-    let recipient = evmParams.args !! 0
+    let recipient = abiDecodeAddress (abiStripSelector evmTxParams.calldata) 0
     assertMsg "must transfer to vault" $
-      recipient == vaultAddress
+      sameHex recipient (abiAddressSlotToAddress evmVaultAddress)
     ...
 ```
 
 After MPC confirms the transfer succeeded, `ClaimCustodySweep` creates
-the `Erc20Holding` — same verification pattern as `ClaimEvmDeposit`.
+the `Erc20Holding` — same verification pattern as `ClaimDeposit`.
 
 #### Naming Summary
 

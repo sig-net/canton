@@ -71,8 +71,8 @@ These take byte offsets (except `abiReadOffset` which takes a slot index).
 
 ## Dependencies
 
-- `daml-prim`, `daml-stdlib`
-- For signed integer comparisons: `daml-uint256` provides `HexCompare.hexCompareInt`
+- `daml-prim`, `daml-stdlib` (the only dependencies)
+- Optional: signed integer comparisons via the sibling `daml-uint256` package (`HexCompare.hexCompareInt`)
 
 ## Usage
 
