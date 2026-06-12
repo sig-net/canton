@@ -66,10 +66,12 @@ hexIsZero hex =
   in DA.Text.asciiToLower hex == allZeros
 
 -- | Left-pad hex to 64 chars (32 bytes) with zeros for ABI slot-width comparison.
+-- Errors on input longer than 64 hex chars: a uint256 cannot exceed 32 bytes,
+-- and silently truncating would misinterpret the value.
 hexPadUint256 : BytesHex -> BytesHex
 hexPadUint256 hex =
   let hexLen = DA.Text.length hex
       padLen = 64 - hexLen
-  in if padLen <= 0
-     then DA.Text.take 64 hex
+  in if padLen < 0
+     then error ("hexPadUint256: input is " <> show hexLen <> " hex chars, max 64")
      else DA.Text.implode (replicate padLen "0") <> hex

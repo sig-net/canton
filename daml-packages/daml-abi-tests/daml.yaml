@@ -10,3 +10,5 @@ data-dependencies:
   - ../daml-abi/.daml/dist/daml-abi-0.0.1.dar
 build-options:
   - -Wno-crypto-text-is-alpha
+  # try/catch is the only way to assert pure `error` paths in Daml Script tests
+  - -Wno-deprecated-exceptions

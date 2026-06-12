@@ -391,13 +391,15 @@ describe("ABI encoding vectors (cross-language ground truth)", () => {
   });
 
   // --- New: bool non-zero, signed int edge cases ---
-  it("bool(0xff) — non-zero non-one is true (viem strict rejects, Daml/Solidity accept)", () => {
-    // viem's decoder is strict and rejects non-0/1 bool values.
-    // Solidity's own ABI decoder accepts any non-zero as true.
-    // Verify the raw byte is non-zero (which our Daml decoder treats as true).
-    const lastByte = VECTORS.bool_nonzero_true.slice(-2);
-    expect(lastByte).toBe("ff");
-    expect(lastByte).not.toBe("00");
+  it("bool(0xff) — non-binary bool is rejected by viem, Solidity >= 0.8, and Daml alike", () => {
+    // The ABI spec restricts bool to uint8 values 0 and 1. viem's decoder
+    // throws on anything else; Solidity reverts since 0.8.0, where abicoder
+    // v2 (which validates value == iszero(iszero(value)) on decode) became
+    // the default — pre-0.8 abicoder v1 silently coerced non-zero to true.
+    // Daml's abiDecodeBool errors like the modern decoders. The vector
+    // exists so the Daml side can assert strict rejection.
+    expect(() => decodeAbiParameters([{ type: "bool" }], VECTORS.bool_nonzero_true)).toThrow();
+    expect(VECTORS.bool_nonzero_true.slice(-2)).toBe("ff");
   });
   it("int256(-2)", () => {
     expect(encodeAbiParameters([{ type: "int256" }], [-2n])).toBe(VECTORS.int256_neg2);

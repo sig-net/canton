@@ -9,7 +9,7 @@ import Abi
 
 -- ---------------------------------------------------------------------------
 -- Cross-language ABI vectors (oracle: viem encodeAbiParameters)
--- Must match client/src/test/abi.test.ts VECTORS (without 0x prefix).
+-- Must match daml-packages/daml-abi/test/abi.test.ts VECTORS (without 0x prefix).
 -- ---------------------------------------------------------------------------
 
 -- Static types
@@ -280,7 +280,7 @@ vec_dynamic_tuple_str_first =
   <> "0000000000000000000000000000000000000000000000000000000000000005"
   <> "48656c6c6f000000000000000000000000000000000000000000000000000000"
 
--- Bool with non-zero in non-last byte (malformed but should be true)
+-- Bool with non-zero in non-last byte (malformed; strict decoder rejects)
 vec_bool_malformed_nonzero : BytesHex
 vec_bool_malformed_nonzero = "0100000000000000000000000000000000000000000000000000000000000000"
 
@@ -381,12 +381,18 @@ testAbiDecodeUint = do
 
 testAbiDecodeBool : Script ()
 testAbiDecodeBool = do
-  assertMsg "bool(true)" (abiDecodeBool vec_bool_true 0 == True)
-  assertMsg "bool(false)" (abiDecodeBool vec_bool_false 0 == False)
-  assertMsg "bool from tuple slot 2" (abiDecodeBool vec_tuple_uint_addr_bool 2 == True)
-  assertMsg "bool false from tuple slot 1" (abiDecodeBool vec_tuple_uint_bool_false 1 == False)
-  assertMsg "bool(0xff) non-zero is true" (abiDecodeBool vec_bool_nonzero_true 0 == True)
-  assertMsg "bool malformed non-zero in first byte is true" (abiDecodeBool vec_bool_malformed_nonzero 0 == True)
+  assertMsg "bool(true)" (abiDecodeBool vec_bool_true 0)
+  assertMsg "bool(false)" (not (abiDecodeBool vec_bool_false 0))
+  assertMsg "bool from tuple slot 2" (abiDecodeBool vec_tuple_uint_addr_bool 2)
+  assertMsg "bool false from tuple slot 1" (not (abiDecodeBool vec_tuple_uint_bool_false 1))
+  -- Strict per spec: bool is uint8 restricted to 0 and 1. Solidity >= 0.8
+  -- (abicoder v2) and viem both reject non-binary slots; so do we.
+  caught1 <- try (pure (show (abiDecodeBool vec_bool_nonzero_true 0)))
+    catch (GeneralError _) -> pure "caught"
+  assertMsg "bool(0xff) non-binary is rejected" (caught1 == "caught")
+  caught2 <- try (pure (show (abiDecodeBool vec_bool_malformed_nonzero 0)))
+    catch (GeneralError _) -> pure "caught"
+  assertMsg "bool non-zero in first byte is rejected" (caught2 == "caught")
 
 -- ---------------------------------------------------------------------------
 -- Tests: abiDecodeAddress
@@ -557,7 +563,7 @@ testAbiDecodeNestedTuple = do
   assertMsg "outer uint = 42" (abiDecodeUint vec_nested_tuple_uint_addr_bool 0 == "000000000000000000000000000000000000000000000000000000000000002a")
   assertMsg "inner address = vitalik"
     (abiDecodeAddress vec_nested_tuple_uint_addr_bool 1 == "d8da6bf26964af9d7eed9e03e53415d37aa96045")
-  assertMsg "inner bool = true" (abiDecodeBool vec_nested_tuple_uint_addr_bool 2 == True)
+  assertMsg "inner bool = true" (abiDecodeBool vec_nested_tuple_uint_addr_bool 2)
   assertMsg "slot count = 3" (abiSlotCount vec_nested_tuple_uint_addr_bool == 3)
 
 -- ---------------------------------------------------------------------------
@@ -633,7 +639,7 @@ testAbiDecodeTupleDynMember = do
   let strOffset = abiDecodeTupleDynMember vec_dynamic_tuple 0 1
   assertMsg "string offset = 96" (strOffset == 96)
   assertMsg "string = Hello" (abiDecodeString vec_dynamic_tuple strOffset == "Hello")
-  assertMsg "bool = true" (abiDecodeBool vec_dynamic_tuple 2 == True)
+  assertMsg "bool = true" (abiDecodeBool vec_dynamic_tuple 2)
 
 -- ---------------------------------------------------------------------------
 -- Tests: multi-dimensional array — uint256[][]
@@ -696,7 +702,7 @@ testAbiDecodeTupleDynMemberAtIndex0 = do
   let strOffset = abiDecodeTupleDynMember vec_dynamic_tuple_str_first 0 0
   assertMsg "string at index 0 = Hello" (abiDecodeString vec_dynamic_tuple_str_first strOffset == "Hello")
   assertMsg "uint at index 1 = 99" (abiDecodeUint vec_dynamic_tuple_str_first 1 == "0000000000000000000000000000000000000000000000000000000000000063")
-  assertMsg "bool at index 2 = true" (abiDecodeBool vec_dynamic_tuple_str_first 2 == True)
+  assertMsg "bool at index 2 = true" (abiDecodeBool vec_dynamic_tuple_str_first 2)
 
 -- ---------------------------------------------------------------------------
 -- Tests: named max uint256 vector
@@ -1126,8 +1132,9 @@ testAbiDecodeTupleDynMemberRejectsNegativeMemberIndex = do
 -- ---------------------------------------------------------------------------
 -- Tests: regression — hex case-insensitivity does NOT break bool/address.
 -- Only abiHasErrorPrefix / abiStripErrorPrefix need explicit case handling;
--- bool and address validations rely on numeric non-zero comparison that is
--- inherently case-insensitive for the digits involved.
+-- the canonical bool slots (all digits) and the address zero-padding contain
+-- no letters, so their comparisons are inherently case-free, and non-binary
+-- bools are rejected regardless of the case they arrive in.
 -- ---------------------------------------------------------------------------
 
 testAbiDecodeBoolCaseInsensitive : Script ()
@@ -1135,9 +1142,14 @@ testAbiDecodeBoolCaseInsensitive = do
   let lowerFf = "00000000000000000000000000000000000000000000000000000000000000ff"
   let upperFf = "00000000000000000000000000000000000000000000000000000000000000FF"
   let zero    = "0000000000000000000000000000000000000000000000000000000000000000"
-  assertMsg "bool(0xff lowercase) = true" (abiDecodeBool lowerFf 0 == True)
-  assertMsg "bool(0xFF uppercase) = true" (abiDecodeBool upperFf 0 == True)
-  assertMsg "bool(all zero) = false" (abiDecodeBool zero 0 == False)
+  caught1 <- try (pure (show (abiDecodeBool lowerFf 0)))
+    catch (GeneralError _) -> pure "caught"
+  assertMsg "bool(0xff lowercase) rejected" (caught1 == "caught")
+  caught2 <- try (pure (show (abiDecodeBool upperFf 0)))
+    catch (GeneralError _) -> pure "caught"
+  assertMsg "bool(0xFF uppercase) rejected" (caught2 == "caught")
+  assertMsg "bool(all zero) = false" (not (abiDecodeBool zero 0))
+  assertMsg "bool(canonical one) = true" (abiDecodeBool vec_bool_true 0)
 
 testAbiDecodeAddressCaseInsensitive : Script ()
 testAbiDecodeAddressCaseInsensitive = do

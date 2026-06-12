@@ -34,6 +34,10 @@ addressPadHexChars = 24
 zeroSlot : BytesHex
 zeroSlot = "0000000000000000000000000000000000000000000000000000000000000000"
 
+-- | 32-byte slot encoding the value 1 (canonical ABI bool true).
+oneSlot : BytesHex
+oneSlot = "0000000000000000000000000000000000000000000000000000000000000001"
+
 -- | 12-byte zero-padding prefix used by canonical ABI address slots.
 abiAddressPadding : BytesHex
 abiAddressPadding = DA.Text.take addressPadHexChars zeroSlot
@@ -77,6 +81,10 @@ abiSelector hex =
      else DA.Text.take selectorHexChars hex
 
 -- | Compute the canonical 4-byte selector for a Solidity function signature.
+-- The signature must already be in canonical form per the ABI spec: function
+-- name + parenthesised parameter types, comma-separated with no spaces or
+-- parameter names, and aliases spelled out (uint256 not uint, int256 not int,
+-- e.g. "transfer(address,uint256)"). No canonicalisation is performed here.
 functionSelector : Text -> BytesHex
 functionSelector functionSignature =
   DA.Text.take selectorHexChars (keccak256 (toHex functionSignature))
@@ -110,10 +118,21 @@ abiDecodeUint = abiSlot
 abiDecodeInt : BytesHex -> Int -> BytesHex
 abiDecodeInt = abiSlot
 
--- | Decode bool at slot i. Any non-zero 32-byte slot is true.
+-- | Decode bool at slot i. Strict per the ABI spec: bool is "uint8 restricted
+-- to the values 0 and 1", so only the canonical all-zero and ...01 slots are
+-- accepted; anything else errors. This matches Solidity >= 0.8 (abicoder v2,
+-- the default since Dec 2020) and viem, both of which reject non-binary bool
+-- slots. The EVM itself has no bool type, and pre-0.8 abicoder v1 silently
+-- coerced any non-zero word to true — for value-bearing decisions we fail
+-- closed instead of guessing.
+-- (Both canonical slots are all digits, so hex case cannot affect the match.)
 abiDecodeBool : BytesHex -> Int -> Bool
-abiDecodeBool hex i =
-  abiSlot hex i /= zeroSlot
+abiDecodeBool hex i
+  | slot == zeroSlot = False
+  | slot == oneSlot = True
+  | otherwise = error ("abiDecodeBool: non-binary bool value at slot " <> show i)
+  where
+    slot = abiSlot hex i
 
 -- | Decode address at slot i (20 bytes, validates 12-byte zero padding).
 abiDecodeAddress : BytesHex -> Int -> BytesHex

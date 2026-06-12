@@ -4,7 +4,7 @@ import DA.Optional (fromSome)
 import DA.Crypto.Text (keccak256, secp256k1WithEcdsaOnly, packHexBytes, byteCount, toHex, fromHex)
 import Daml.Script
 
-import Eip712 (chainIdToDecimalText)
+import Eip712 (chainIdToDecimalText, eip712EncodeBytesArray, keccak256Empty)
 
 -- Inlined from daml-evm-types TestFixtures (package absorbed into daml-signer)
 testPubKeyHex : Text
@@ -85,6 +85,26 @@ testSecp256k1AcceptsBothLowAndHighS = do
   let okLow  = secp256k1WithEcdsaOnly testSignatureLowSHex  testMessageHex testPubKeyHex
   assertMsg "high-s signature must verify" okHigh
   assertMsg "low-s signature must verify"  okLow
+
+------------------------------------------------------------------------
+-- eip712EncodeBytesArray (oracle: viem keccak256)
+------------------------------------------------------------------------
+
+-- keccak256(concat(map keccak256 items)); empty bytes (whole array or an
+-- element) hash to keccak256("") = keccak256Empty rather than erroring.
+testEip712EncodeBytesArray : Script ()
+testEip712EncodeBytesArray = do
+  assertMsg "empty array hashes to keccak256(\"\")"
+    (eip712EncodeBytesArray [] == keccak256Empty)
+  assertMsg "single empty element = keccak256(keccak256(\"\"))"
+    (eip712EncodeBytesArray [""]
+      == "10ca3eff73ebec87d2394fc58560afeab86dac7a21f5e402ea0a55e5c8a6758f")
+  assertMsg "single element [aabb]"
+    (eip712EncodeBytesArray ["aabb"]
+      == "2cf601d4a7ef99da3169491e3a64f739f22aaf39c433ec9a8d6b0041f2296de1")
+  assertMsg "mixed [aabb, empty]"
+    (eip712EncodeBytesArray ["aabb", ""]
+      == "4f7d6f9a40b8de4a4dbdf373cb75422496901d0ea2b911473ba3e2e4591a1fbd")
 
 ------------------------------------------------------------------------
 -- toHex / fromHex round-trips

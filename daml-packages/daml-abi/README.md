@@ -23,7 +23,7 @@ let name   = abiDecodeString hex offset -- byte offset → decoded value
 ### Calldata
 
 - `abiSelector : BytesHex -> BytesHex` -- extract 4-byte function selector. Errors if data < 4 bytes.
-- `functionSelector : Text -> BytesHex` -- compute the canonical 4-byte selector for a Solidity function signature.
+- `functionSelector : Text -> BytesHex` -- compute the 4-byte selector for a Solidity function signature, which must already be in canonical ABI form (no spaces or parameter names, aliases spelled out — e.g. `transfer(address,uint256)`).
 - `abiSelectorMatches : Text -> BytesHex -> Bool` -- check calldata selector against a Solidity function signature.
 - `abiStripSelector : BytesHex -> BytesHex` -- strip selector, leaving ABI payload. Errors if data < 4 bytes.
 
@@ -39,7 +39,7 @@ All take a slot index. Error on out-of-bounds.
 
 - `abiDecodeUint : BytesHex -> Int -> BytesHex` -- decode uint (any width) at slot i. Returns raw 32-byte hex.
 - `abiDecodeInt : BytesHex -> Int -> BytesHex` -- decode int (two's complement) at slot i. Returns raw 32-byte hex. Use `hexCompareInt` from `daml-uint256/HexCompare` for signed comparisons.
-- `abiDecodeBool : BytesHex -> Int -> Bool` -- decode bool at slot i (any non-zero = true).
+- `abiDecodeBool : BytesHex -> Int -> Bool` -- decode bool at slot i (strict per the ABI spec: only the canonical all-zero / `…01` slots; anything else errors).
 - `abiDecodeAddress : BytesHex -> Int -> BytesHex` -- decode address at slot i (20 bytes). Errors if the 12-byte zero padding is non-zero.
 - `isAbiAddressSlot : BytesHex -> Bool` -- validate a 32-byte ABI-encoded address slot with zero high bytes.
 - `abiAddressSlotToAddress : BytesHex -> BytesHex` -- extract the 20-byte address from a canonical ABI address slot.
@@ -67,10 +67,11 @@ These take byte offsets (except `abiReadOffset` which takes a slot index).
 
 - `slotBytes : Int` -- 32 (bytes per ABI slot)
 - `zeroSlot : BytesHex` -- 32-byte zero slot
+- `oneSlot : BytesHex` -- 32-byte slot encoding 1 (canonical ABI bool true)
 
 ## Dependencies
 
-- `daml-prim`, `daml-stdlib`, `daml-script`
+- `daml-prim`, `daml-stdlib`
 - For signed integer comparisons: `daml-uint256` provides `HexCompare.hexCompareInt`
 
 ## Usage
@@ -96,7 +97,11 @@ let success = abiDecodeBool returnData 0
 
 ## Build & Test
 
+From the repo root:
+
 ```bash
-dpm build
-dpm test
+dpm build --all
+pnpm run daml:test
 ```
+
+Tests live in `daml-abi-tests`.
