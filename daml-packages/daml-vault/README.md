@@ -260,4 +260,4 @@ import Signer (Signer, SignBidirectionalEvent, SignatureRespondedEvent, RespondB
 import EvmTypes (EvmType2TransactionParams(..))
 ```
 
-A complete TypeScript end-to-end run-through (party allocation, vault creation, deposit, claim, withdrawal, refund-on-failure) lives in `test/src/test/devnet-e2e.test.ts` in this repo.
+A TypeScript end-to-end run-through of the success paths (deposit, claim, withdrawal) lives in `test/src/test/devnet-e2e.test.ts`, against a Vault pre-deployed by `test/src/scripts/deploy-vault.ts`.

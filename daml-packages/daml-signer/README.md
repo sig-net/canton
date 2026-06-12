@@ -402,8 +402,7 @@ Upgradability rules:
   deploy approvals.
 - **Economics:** keeping `feeReceiver = sigNetworkFA` (also the preapproval provider) captures the
   featured-app reward on each incoming fee transfer (~$1 activity markers until CIP-0104
-  Increment 4 cuts over; traffic-based afterwards). Reward model + strategy:
-  [`proposals/featured-app-rewards.md`](../../proposals/featured-app-rewards.md).
+  Increment 4 cuts over; traffic-based afterwards).
 
 ### Fee security model and accepted trade-offs
 

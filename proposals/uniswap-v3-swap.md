@@ -53,7 +53,7 @@ of maturity, liquidity, and documentation. Active pools for WETH/USDC and UNI/WE
   |                  |---------------------->|                  |
   |                  |                       | sign + submit    |
   |                  |                       |----------------->|
-  |                  |                       | EcdsaSignature   |
+  |                  |                       | signature        |
   |                  |<----------------------|                  |
   |                  |                       | outcome sig      |
   |                  |<----------------------|                  |
@@ -73,7 +73,7 @@ function approve(address spender, uint256 amount) returns (bool)
 selector: 0x095ea7b3
 ```
 
-Same as Aave proposal — see `aave-v3-yield.md` for EvmTransactionParams.
+Same as Aave proposal — see `aave-v3-yield.md` for the calldata layout.
 `spender` = SwapRouter02 address.
 
 ### 2. SwapRouter02 `exactInputSingle`
@@ -95,20 +95,20 @@ struct ExactInputSingleParams {
 
 **Selector:** `0x04e45aaf`
 
-**EvmTransactionParams (example: swap 0.01 WETH → USDC, 0.3% fee):**
+**`EvmType2TransactionParams` calldata layout (example: swap 0.01 WETH → USDC, 0.3% fee):**
 
-| Field               | Value                                                                          |
-| ------------------- | ------------------------------------------------------------------------------ |
-| `to`                | Router `3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e`                              |
-| `functionSignature` | `"exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"` |
-| `args[0]`           | tokenIn (WETH), left-padded 32 bytes                                           |
-| `args[1]`           | tokenOut (USDC), left-padded 32 bytes                                          |
-| `args[2]`           | fee = `0bb8` (3000), left-padded 32 bytes                                      |
-| `args[3]`           | recipient = vault address, left-padded 32 bytes                                |
-| `args[4]`           | amountIn, left-padded 32 bytes                                                 |
-| `args[5]`           | amountOutMinimum = `00..00` (0 for PoC; set real value in prod)                |
-| `args[6]`           | sqrtPriceLimitX96 = `00..00` (0 = no limit)                                    |
-| `value`             | `00..00` (32 bytes zero — not sending ETH)                                     |
+| Field / slot       | Value                                                                          |
+| ------------------ | ------------------------------------------------------------------------------ |
+| `to`               | Router `3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e`                              |
+| selector source    | `"exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"` |
+| arg slot 0         | tokenIn (WETH), left-padded 32 bytes                                           |
+| arg slot 1         | tokenOut (USDC), left-padded 32 bytes                                          |
+| arg slot 2         | fee = `0bb8` (3000), left-padded 32 bytes                                      |
+| arg slot 3         | recipient = vault address, left-padded 32 bytes                                |
+| arg slot 4         | amountIn, left-padded 32 bytes                                                 |
+| arg slot 5         | amountOutMinimum = `00..00` (0 for PoC; set real value in prod)                |
+| arg slot 6         | sqrtPriceLimitX96 = `00..00` (0 = no limit)                                    |
+| `value`            | `00..00` (32 bytes zero — not sending ETH)                                     |
 
 **Schema:** `outputDeserializationSchema = [{"name":"amountOut","type":"uint256"}]`
 **Schema:** `respondSerializationSchema = [{"name":"amountOut","type":"uint256"}]`
@@ -120,19 +120,20 @@ matching standard ABI encoding for tuple parameters.
 
 ## Daml Contract Changes
 
-### New TxSource Variant
+### New TxSource Type
 
 ```daml
+-- new type — current code anchors flows in separate PendingDeposit/PendingWithdrawal templates
 data TxSource
   = DepositSource (ContractId DepositAuthorization)
   | WithdrawalSource (ContractId Erc20Holding)
   | ApproveSource                                    -- from aave proposal
   | AaveSupplySource (ContractId Erc20Holding)       -- from aave proposal
-  | AaveWithdrawSource (ContractId AavePosition)     -- from aave proposal
+  | AaveWithdrawSource (ContractId Erc20Holding)     -- from aave proposal
   | SwapSource (ContractId Erc20Holding)             -- NEW
 ```
 
-### New Choices on VaultOrchestrator
+### New Choices on Vault
 
 `RequestEvmApprove` and `ClaimEvmApprove` are shared with the Aave proposal — see
 `aave-v3-yield.md`.
@@ -143,37 +144,41 @@ data TxSource
 nonconsuming choice RequestUniswapSwap : ContractId PendingEvmTx
   with
     requester        : Party
+    signerCid        : ContractId Signer
     holdingCid       : ContractId Erc20Holding
     tokenOut         : BytesHex    -- output token address
     fee              : BytesHex    -- Uniswap fee tier (e.g., 0bb8 = 3000)
     amountOutMinimum : BytesHex    -- slippage protection
-    evmParams        : EvmTransactionParams
+    evmTxParams      : EvmType2TransactionParams
+    -- plus keyVersion/algo/dest/params, schema strings, and the CC fee args,
+    -- as in RequestDeposit/RequestWithdrawal
   controller requester
   do
     holding <- fetch holdingCid
 
     assertMsg "owner mismatch" $ holding.owner == requester
-    assertMsg "issuer mismatch" $ holding.issuer == issuer
+    assertMsg "operators mismatch" $ sameOperatorSet holding.operators operators
     assertMsg "must be exactInputSingle" $
-      evmParams.functionSignature ==
+      abiSelectorMatches
         "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"
+        evmTxParams.calldata
 
-    -- validate args match holding
-    let argsTokenIn  = evmParams.args !! 0
-        argsAmountIn = evmParams.args !! 4
+    -- validate calldata slots match holding
+    let argSlots = abiStripSelector evmTxParams.calldata
     assertMsg "tokenIn must match holding contract" $
-      argsTokenIn == holding.erc20Address
+      abiDecodeAddress argSlots 0 == holding.erc20Address
     assertMsg "amountIn must match holding amount" $
-      argsAmountIn == holding.amount
+      abiDecodeUint argSlots 4 == holding.amount
 
     archive holdingCid
 
-    let requestPath = "root"
-        nonceCidText = show holdingCid
-        router = evmParams.to
-        requestId = computeRequestId
-          (show requester) evmParams caip2Id keyVersion
-          requestPath algo (show router) nonceCidText
+    -- Signer.RequestSignature charges the CC fee, sets sender = operators hash,
+    -- and emits the SignBidirectionalEvent the MPC watches
+    let requestPath = vaultId <> ",root"
+    signEventCid <- exercise signerCid RequestSignature with
+      txParams = EvmType2TxParams evmTxParams; path = requestPath; ..
+    signEvent <- fetch signEventCid
+    let requestId = requestIdFromSignEvent signEvent
 
     create PendingEvmTx with
       source = SwapSource holdingCid
@@ -191,51 +196,49 @@ nonconsuming choice RequestUniswapSwap : ContractId PendingEvmTx
 nonconsuming choice ClaimUniswapSwap
     : Optional (ContractId Erc20Holding)
   with
-    requester    : Party
-    pendingCid   : ContractId PendingEvmTx
-    outcomeCid   : ContractId EvmTxOutcomeSignature
-    signatureCid : ContractId EcdsaSignature
+    requester                    : Party
+    pendingCid                   : ContractId PendingEvmTx
+    respondBidirectionalEventCid : ContractId RespondBidirectionalEvent
+    signatureRespondedEventCid   : ContractId SignatureRespondedEvent
   controller requester
   do
     pending <- fetch pendingCid
-    outcome <- fetch outcomeCid
+    outcome <- fetch respondBidirectionalEventCid
 
     -- verify MPC signature
     assertMsg "requestId mismatch" $ pending.requestId == outcome.requestId
-    let responseHash = computeResponseHash pending.requestId outcome.mpcOutput
+    let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
     assertMsg "invalid MPC signature" $
-      verifyEcdsaSignature mpcPublicKey responseHash outcome.signature
+      secp256k1WithEcdsaOnly (signatureDer outcome.signature) responseHash
+        mpcResponseVerifyKey
 
     archive pendingCid
-    archive outcomeCid
-    archive signatureCid
+    exercise respondBidirectionalEventCid Consume_RespondBidirectional with actor = requester
+    exercise signatureRespondedEventCid Consume_SignatureResponded with actor = requester
+    exercise pending.signEventCid Consume_SignBidirectional with actor = requester
 
-    if hasErrorPrefix outcome.mpcOutput then do
+    let argSlots = abiStripSelector pending.evmTxParams.calldata
+    if abiHasErrorPrefix outcome.serializedOutput then do
       -- swap failed — refund original holding
-      let tokenIn = pending.evmParams.args !! 0
-          amountIn = pending.evmParams.args !! 4
       refundCid <- create Erc20Holding with
+        operators
         owner = requester
-        amount = amountIn
-        erc20Address = tokenIn
-        ..
+        erc20Address = abiDecodeAddress argSlots 0
+        amount = abiDecodeUint argSlots 4
       pure (Some refundCid)
     else do
       -- swap succeeded — create holding for output token
-      let amountOut = abiSlot outcome.mpcOutput 0
-          tokenOut  = pending.evmParams.args !! 1
-
       holdingCid <- create Erc20Holding with
+        operators
         owner = requester
-        amount = amountOut
-        erc20Address = tokenOut
-        ..
+        erc20Address = abiDecodeAddress argSlots 1
+        amount = abiDecodeUint outcome.serializedOutput 0
       pure (Some holdingCid)
 ```
 
 ### Validation Notes
 
-**Slippage protection:** `amountOutMinimum` is passed in `evmParams.args[5]`. For
+**Slippage protection:** `amountOutMinimum` is passed in calldata arg slot 5. For
 the PoC, set to `0` (accept any output). In production, the user should compute this
 off-chain using QuoterV2 and set a meaningful minimum.
 
@@ -250,7 +253,7 @@ would require splitting the holding first (future extension).
 ## MPC Service Changes
 
 **None.** Same as the Aave proposal — the existing pipeline handles any
-`PendingEvmTx` generically.
+`SignBidirectionalEvent` generically.
 
 ## E2E Test Plan
 
@@ -258,7 +261,7 @@ would require splitting the holding first (future extension).
 
 **Setup (beforeAll, 60s):**
 
-1. `setupVault()` — allocate parties, upload DAR, create VaultOrchestrator
+1. `setupVault()` — allocate parties, upload DAR, create Vault
 2. Fund vault address with WETH on Sepolia:
    - Send ETH to vault address
    - Call `WETH.deposit{value: 0.01 ether}()` via MPC (or fund directly from faucet)
@@ -270,7 +273,7 @@ would require splitting the holding first (future extension).
 **Test 1: Swap WETH → USDC (300s):**
 
 1. Create `Erc20Holding` for WETH (via deposit flow or direct create)
-2. Build `EvmTransactionParams` for `exactInputSingle`:
+2. Build `EvmType2TransactionParams` calldata for `exactInputSingle`:
    - tokenIn = WETH, tokenOut = USDC, fee = 3000
    - amountIn = holding amount, amountOutMinimum = 0
 3. Exercise `RequestUniswapSwap`
