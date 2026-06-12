@@ -14,11 +14,12 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 ## Parties
 
-| Party        | Role                              | Owns                                |
-| ------------ | --------------------------------- | ----------------------------------- |
-| `sigNetwork` | MPC infrastructure party          | `Signer` and MPC response contracts |
-| `operators`  | Vault operator set                | `Vault`, pending anchors, holdings  |
-| `requester`  | End user for a deposit/withdrawal | Request flow and owned holdings     |
+| Party          | Role                                               | Owns                                                            |
+| -------------- | -------------------------------------------------- | --------------------------------------------------------------- |
+| `sigNetwork`   | MPC infrastructure party                           | Co-signs `Signer` (with `sigNetworkFA`); MPC response contracts |
+| `sigNetworkFA` | Featured-app provider and fee admin (signer layer) | Co-signs `Signer` and the sign/response events; fee contracts   |
+| `operators`    | Vault operator set                                 | `Vault`, pending anchors, holdings                              |
+| `requester`    | End user for a deposit/withdrawal                  | Request flow and owned holdings                                 |
 
 ## Choices
 
@@ -28,6 +29,9 @@ Both `RequestDeposit` and `RequestWithdrawal` also take the three CC signature-f
 `FeeCollector`. The requester sources them client-side (see `canton-sig`'s fee helpers) and
 attaches the matching disclosures; if the fee can't settle, `RequestSignature` aborts and nothing
 is created. See [daml-signer § CC signature fee](../daml-signer/README.md#cc-signature-fee).
+
+Both choices also pin `caip2Id = "eip155:1"` (test mode — the MPC indexer accepts only that
+caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself targets Sepolia.
 
 `Vault.RequestDeposit` (controller `requester`):
 
@@ -238,6 +242,9 @@ data-dependencies:
   - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
   - ../daml-abi/.daml/dist/daml-abi-0.0.1.dar
   - ../daml-eip712/.daml/dist/daml-eip712-0.0.1.dar
+  - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
+  - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
+  - ../vendor/splice-api-token-holding-v1-1.0.0.dar
 build-options:
   - -Wno-crypto-text-is-alpha
 ```

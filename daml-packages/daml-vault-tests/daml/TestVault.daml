@@ -296,13 +296,13 @@ testClaimHappyPath = do
 
   -- Evidence and pending must be archived
   oldPending <- queryContractId requester pendingCid
-  assertMsg "pending archived" (oldPending == None)
+  assertMsg "pending archived" (isNone oldPending)
   oldOutcome <- queryContractId requester outcomeCid
-  assertMsg "outcome archived" (oldOutcome == None)
+  assertMsg "outcome archived" (isNone oldOutcome)
   oldSig <- queryContractId requester respondedCid
-  assertMsg "sig archived" (oldSig == None)
+  assertMsg "sig archived" (isNone oldSig)
   oldSignEvent <- queryContractId requester signEventCid
-  assertMsg "sign event archived" (oldSignEvent == None)
+  assertMsg "sign event archived" (isNone oldSignEvent)
 
 ------------------------------------------------------------------------
 -- ClaimDeposit rejects wrong requester
@@ -473,6 +473,17 @@ testDepositRejectsTrailingEncodedArgs = do
   let badParams = sampleEvmType2Params with calldata = sampleEvmType2Params.calldata <> "00"
   requestDepositMustFail env "test" badParams
 
+-- RequestDeposit accepts uppercase calldata: the recipient-must-be-vault
+-- comparison must not depend on the hex case the client happened to send.
+testDepositAcceptsMixedCaseHex : Script ()
+testDepositAcceptsMixedCaseHex = do
+  env@VaultEnv{requester} <- setup
+
+  let upperParams = sampleEvmType2Params with
+        calldata = DA.Text.asciiToUpper sampleEvmType2Params.calldata
+  _ <- requestDeposit env (partyToText requester) upperParams
+  pure ()
+
 ------------------------------------------------------------------------
 -- Withdrawal lifecycle
 ------------------------------------------------------------------------
@@ -498,7 +509,7 @@ testWithdrawalLifecycle = do
 
   -- Holding must be archived
   oldHolding <- queryContractId requester holdingCid
-  assertMsg "holding must be archived" (oldHolding == None)
+  assertMsg "holding must be archived" (isNone oldHolding)
 
 ------------------------------------------------------------------------
 -- Withdrawal complete success returns None
@@ -656,6 +667,21 @@ testWithdrawalRejectsTrailingEncodedArgs = do
   let badParams = sampleWithdrawalEvmParams with
         calldata = sampleWithdrawalEvmParams.calldata <> "00"
   requestWithdrawalMustFail env badParams sampleRecipientAddress holdingCid
+
+-- RequestWithdrawal accepts uppercase hex: calldata and `to` arrive uppercase
+-- while the holding and recipient slot are lowercase — BytesHex legitimately
+-- allows either case, so the vault's value comparisons must not be
+-- case-sensitive.
+testWithdrawalAcceptsMixedCaseHex : Script ()
+testWithdrawalAcceptsMixedCaseHex = do
+  env@VaultEnv{operator, requester} <- setup
+
+  holdingCid <- mkHolding operator requester sampleErc20Address sampleHoldingAmount
+  let upperParams = sampleWithdrawalEvmParams with
+        calldata = DA.Text.asciiToUpper sampleWithdrawalEvmParams.calldata
+        to = fmap DA.Text.asciiToUpper sampleWithdrawalEvmParams.to
+  _ <- requestWithdrawal env upperParams sampleRecipientAddress holdingCid
+  pure ()
 
 ------------------------------------------------------------------------
 -- RequestWithdrawal rejects holding with mismatched operators

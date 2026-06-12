@@ -1,6 +1,7 @@
 module Erc20Vault where
 
 import DA.List (sort, unique)
+import qualified DA.Text
 import DA.Crypto.Text (BytesHex, PublicKeyHex, secp256k1WithEcdsaOnly)
 
 import EvmTypes (EvmType2TransactionParams, isBytesN, validEvmType2TransactionParams)
@@ -28,6 +29,11 @@ import Signet.Api.Fee.V1 (FeeCollectorRegistration)
 
 sameOperatorSet : [Party] -> [Party] -> Bool
 sameOperatorSet lhs rhs = sort lhs == sort rhs
+
+-- | Case-insensitive hex equality. BytesHex legitimately allows A-F and a-f,
+-- so value comparisons must not depend on the case the client happened to send.
+sameHex : BytesHex -> BytesHex -> Bool
+sameHex lhs rhs = DA.Text.asciiToLower lhs == DA.Text.asciiToLower rhs
 
 erc20TransferArgSlots : Int
 erc20TransferArgSlots = 2
@@ -204,7 +210,7 @@ template Vault
           (abiHasExactSlotCount erc20TransferArgSlots transferArgs)
         let recipientAddress = abiDecodeAddress transferArgs 0
         assertMsg "Transfer recipient must be vault address"
-          (recipientAddress == abiAddressSlotToAddress evmVaultAddress)
+          (sameHex recipientAddress (abiAddressSlotToAddress evmVaultAddress))
         assertMsg "ERC20 deposit requires token contract recipient"
           (case evmTxParams.to of
             Some _ -> True
@@ -314,11 +320,13 @@ template Vault
         let recipientArg = abiDecodeAddress transferArgs 0
         let amountArg = abiDecodeUint transferArgs 1
         assertMsg "ERC20 contract must match holding"
-          (evmTxParams.to == Some holding.erc20Address)
+          (case evmTxParams.to of
+            Some tokenAddress -> sameHex tokenAddress holding.erc20Address
+            None -> False)
         assertMsg "Transfer recipient must match"
-          (recipientArg == abiAddressSlotToAddress recipientAddress)
+          (sameHex recipientArg (abiAddressSlotToAddress recipientAddress))
         assertMsg "Withdraw amount must match holding"
-          (amountArg == holding.amount)
+          (sameHex amountArg holding.amount)
 
         archive balanceCid        -- optimistic debit: refunded by CompleteWithdrawal if MPC reports failure
 
