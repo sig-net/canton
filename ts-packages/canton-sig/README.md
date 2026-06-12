@@ -147,7 +147,7 @@ const claimTx = await canton.exerciseChoice(
 const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 ```
 
-`pollForContract` is whatever you implement on top of `canton.getActiveContracts` or `createLedgerStream`. The full runnable version (party allocation, faucet funding, gas fetch, polling, withdrawal + refund) is `test/src/test/devnet-e2e.test.ts` in this repo and is the recommended starting point.
+`pollForContract` is whatever you implement on top of `canton.getActiveContracts`. The full runnable version (party allocation, faucet funding, gas fetch, polling, withdrawal + refund) is `test/src/test/devnet-e2e.test.ts` in this repo and is the recommended starting point.
 
 ## Security caveats for integrators
 
@@ -177,9 +177,11 @@ The TS implementation matches `daml-signer/daml/RequestId.daml` byte-for-byte.
 
 ## API
 
-### `CantonClient(baseUrl = "http://localhost:7575")`
+### `CantonClient(baseUrl = "http://localhost:7575", options?: CantonClientOptions)`
 
-`uploadDar`, `allocateParty`, `createUser`, `createUserWithRights`, `listUserRights`, `createContract`, `exerciseChoice`, `getActiveContracts`, `getInterfaceContracts`, `getDisclosedContract`, `getLedgerEnd`, `getUpdates`. All typed against the generated OpenAPI schema.
+`uploadDar`, `allocateParty`, `createUser`, `createUserWithRights`, `grantUserRights`, `listUserRights`, `createContract`, `exerciseChoice`, `getActiveContracts`, `getInterfaceContracts`, `getDisclosedContract`, `getLedgerEnd`. All typed against the generated OpenAPI schema.
+
+`options.getToken` — optional async bearer-token provider; when set, every request carries `Authorization: Bearer <token>`. A local `dpm sandbox` needs no auth; a hosted participant (e.g. DevNet) does.
 
 Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 
@@ -209,9 +211,25 @@ Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 | `submitRawTransaction(rpcUrl, raw)`               | POSTs `eth_sendRawTransaction`, returns the tx hash |
 | `cantonHexToHex(s)` / `toCantonHex(value, bytes)` | Format adapters                                     |
 
-### Streaming + event utilities
+### CC signature fee
 
-`createLedgerStream({ canton, parties, beginExclusive, onUpdate, onReady, onError, onReconnect, maxReconnectAttempts? })` — auto-reconnecting WebSocket with HTTP polling fallback.
+| Export                                                                       | Purpose                                                                                            |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `getFeeCollectorContext(reader, sigNetworkFA)`                               | Active `FeeCollectorRegistration` + collector + in-window `FeePriceConfig`, with their disclosures |
+| `getTransferFactoryForFee(registryUrl, details)`                             | Resolves the CC `TransferFactory` + transfer context from the token-standard registry              |
+| `holdingInputsFromEvents(events)`                                            | `Holding` interface views → fee inputs                                                             |
+| `selectInputHoldings(holdings, feeAmount)`                                   | Greedy largest-first selection of unlocked holdings covering the fee (max `MAX_TRANSFER_INPUTS`)   |
+| `assembleFeeChoiceArgs(collector, factory, selection)`                       | → `{ feeRegistrationCid, feeInputs, feeExtraArgs }` for `RequestDeposit` / `RequestWithdrawal`     |
+| `collectFeeDisclosures(collector, factory)`                                  | All fee disclosures to attach to the exercise                                                      |
+| `parsePriceConfig(event)` / `isPriceConfigInWindow(cfg, now)`                | `FeePriceConfig` helpers                                                                           |
+| `computeFeeCc(inputs)`                                                       | Prices the fee in CC (traffic cost + coverage + profit, scale `CC_DECIMALS`)                       |
+| `repriceWindow` / `findLatestPriceConfig` / `repriceOnce` / `runRepriceLoop` | Fee-admin reprice job (`pnpm --filter canton-sig reprice` → `scripts/reprice-fee.ts`)              |
+
+Constants: `HOLDING_INTERFACE_ID`, `PRICE_CONFIG_CONTEXT_KEY`, `TRANSFER_FACTORY_CONTEXT_KEY`, `TRANSFER_FACTORY_REGISTRY_PATH`, `FEE_COLLECTOR_ENDPOINT_PATH`, `EMPTY_TRANSFER_CONTEXT`, `MAX_TRANSFER_INPUTS`, `CC_DECIMALS`.
+
+The FA fee endpoint (`POST` `FEE_COLLECTOR_ENDPOINT_PATH`) serves the same `FeeCollectorContext` shape `getFeeCollectorContext` builds — endpoint contract: [`daml-signer` README § Fee endpoint contract](../../daml-packages/daml-signer/README.md#fee-endpoint-contract).
+
+### Event utilities
 
 `findCreated(events, templateFragment)` / `firstCreated(events)` / `getCreatedEvent(event)`.
 
@@ -221,7 +239,7 @@ From `@daml.js/daml-signer-0.0.1` and `@daml.js/daml-vault-poc-0.0.1`: `Signer`,
 
 ### Types
 
-`CreatedEvent`, `Event`, `UserRight`, `DisclosedContract`, `TransactionResponse`, `JsGetUpdatesResponse`, `StreamHandle`, `CantonEvmType2Params`, `CantonEvmAccessListEntry`, `Eip1559TxFields`, `TxParams`.
+`CantonClientOptions`, `CreatedEvent`, `Event`, `UserRight`, `DisclosedContract`, `TransactionResponse`, `CantonEvmType2Params`, `CantonEvmAccessListEntry`, `Eip1559TxFields`, `TxParams`, plus the fee types `HoldingInput`, `HoldingSelection`, `FeeLedgerReader`, `FeeCollectorContext`, `FeeTransferDetails`, `ResolvedTransferFactory`, `TransferChoiceContext`, `FeeExtraArgs`, `FeeChoiceArgs`, `FeePricingInputs`, `FeePricingResult`, `MarketInputs`, `RepriceConfig`, `RepriceResult`, `RepriceLoopOptions`, `FeeRepriceClient`.
 
 ## Limitations
 

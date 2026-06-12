@@ -55,7 +55,7 @@ cargo test -p integration-tests --test lib -- canton_stream --ignored --nocaptur
 
 ## Keeping the DAR fixture in sync
 
-The harness loads a checked-in copy of this repo's `daml-vault` DAR (`integration-tests/fixtures/canton/daml-vault-0.0.1.dar`, built with Daml SDK 3.4.11). After changing Daml here, rebuild and copy it over:
+The harness loads a checked-in copy of this repo's `daml-vault` DAR (`integration-tests/fixtures/canton/daml-vault-0.0.1.dar`). After changing Daml here, rebuild and copy it over:
 
 ```bash
 # in THIS repo

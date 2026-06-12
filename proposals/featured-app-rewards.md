@@ -184,11 +184,12 @@ durable, high-volume reward surface. Costs to accept:
 - Adding a signatory is an authorization change, **not** a simple additive Smart
   Contract Upgrade; partners must re-integrate.
 
-**Tier 2 — Co-sign `SignBidirectionalEvent` (not recommended).** It is the
-byte-heaviest envelope, but making `sigNetwork` a signatory here regresses the
-deliberate anti-forgery property — "operators + requester — NOT sigNetwork — so
-a compromised sigNetwork cannot forge sign requests" (`Signer.daml:159`). Not
-worth it for marginal extra bytes; capture request-side value via Tier 1.
+**Tier 2 — Co-sign `SignBidirectionalEvent` with `sigNetwork` (not
+recommended).** It is the byte-heaviest envelope (`sigNetworkFA` already
+co-signs it), but making `sigNetwork` a signatory regresses the deliberate
+anti-forgery property — "sigNetwork is still NOT an authorizer — a compromised
+sigNetwork cannot forge sign requests at the ledger level" (`Signer.daml:209`).
+Not worth it for marginal extra bytes; capture request-side value via Tier 1.
 
 **Maximization tactics (inside fair use):**
 

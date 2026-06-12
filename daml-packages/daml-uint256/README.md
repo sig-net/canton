@@ -16,7 +16,7 @@ Limb-based unsigned 256-bit integer arithmetic for Daml. Uses 10 limbs in base 2
 
 ### Hex Conversion
 
-- `uint256FromHex : BytesHex -> UInt256` -- parse hex (up to 64 chars) into UInt256
+- `uint256FromHex : BytesHex -> UInt256` -- parse hex (up to 64 chars; errors past 64) into UInt256
 - `uint256ToHex : UInt256 -> BytesHex` -- convert to 64-char lowercase hex
 
 ### Arithmetic (mod 2^256, wrapping)
@@ -45,7 +45,7 @@ Limb-based unsigned 256-bit integer arithmetic for Daml. Uses 10 limbs in base 2
 
 ## Dependencies
 
-- `daml-prim`, `daml-stdlib`, `daml-script`
+- `daml-prim`, `daml-stdlib`
 
 ## Usage
 
@@ -95,7 +95,11 @@ TS and Daml test vectors must stay in sync — any change must be reflected in b
 
 ## Build & Test
 
+From the repo root:
+
 ```bash
-dpm build
-dpm test
+dpm build --all
+pnpm run daml:test
 ```
+
+Tests live in `daml-uint256-tests` (Daml) and `test/` (TS oracle, `pnpm test`).

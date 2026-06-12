@@ -162,7 +162,7 @@ nonconsuming choice RequestUniswapSwap : ContractId PendingEvmTx
     let argsTokenIn  = evmParams.args !! 0
         argsAmountIn = evmParams.args !! 4
     assertMsg "tokenIn must match holding contract" $
-      argsTokenIn == holding.erc20Contract
+      argsTokenIn == holding.erc20Address
     assertMsg "amountIn must match holding amount" $
       argsAmountIn == holding.amount
 
@@ -217,7 +217,7 @@ nonconsuming choice ClaimUniswapSwap
       refundCid <- create Erc20Holding with
         owner = requester
         amount = amountIn
-        erc20Contract = tokenIn
+        erc20Address = tokenIn
         ..
       pure (Some refundCid)
     else do
@@ -228,7 +228,7 @@ nonconsuming choice ClaimUniswapSwap
       holdingCid <- create Erc20Holding with
         owner = requester
         amount = amountOut
-        erc20Contract = tokenOut
+        erc20Address = tokenOut
         ..
       pure (Some holdingCid)
 ```
@@ -240,7 +240,7 @@ the PoC, set to `0` (accept any output). In production, the user should compute 
 off-chain using QuoterV2 and set a meaningful minimum.
 
 **tokenOut validation:** The Daml contract validates `tokenIn` matches the holding's
-`erc20Contract` and `amountIn` matches `holding.amount`. The `tokenOut` is trusted
+`erc20Address` and `amountIn` matches `holding.amount`. The `tokenOut` is trusted
 from the user's request — the vault doesn't need to validate it since Uniswap will
 revert if the pool doesn't exist.
 
@@ -278,7 +278,7 @@ would require splitting the holding first (future extension).
 5. Exercise `ClaimUniswapSwap`
 6. Assert: new `Erc20Holding` created for USDC
 7. Assert: `amountOut > 0`
-8. Assert: `erc20Contract` == USDC address
+8. Assert: `erc20Address` == USDC address
 9. Verify on Sepolia: vault WETH balance decreased, USDC balance increased
 
 **Test 2: Swap failure — non-existent pool (300s):**

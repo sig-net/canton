@@ -244,13 +244,13 @@ can do it, and they forfeit the already-paid fee).
 
 ### Failure modes
 
-| Symptom                                                                                        | Meaning                                                                                                                                                                                                                                                                                       | Action                                                                                                                                                                                                                                                                        |
-| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RespondBidirectionalEvent` arrives but `abiHasErrorPrefix outcome.serializedOutput` is `True` | EVM tx reverted (or was replaced / dropped). The MPC still signs and publishes the outcome — payload is the 4-byte `0xdeadbeef` prefix followed by a 32-byte ABI-encoded `bool(true)` placeholder (no embedded EVM error data). The signature is valid; the prefix is the only revert signal. | Domain decision (refund, retry, surface error).                                                                                                                                                                                                                               |
-| `secp256k1WithEcdsaOnly` returns `False`                                                       | Signature does not match `responseHash` under your stored response-verification pubkey                                                                                                                                                                                                        | Reject the claim. Either the wrong pubkey is stored (e.g. someone stored the root by mistake — see Security checklist #4) or the response is forged. Escalate, do not retry.                                                                                                  |
-| Only one of the two response events ever arrives                                               | The downstream-chain operation has not been submitted yet, or the destination chain has not confirmed it                                                                                                                                                                                      | Submit or resubmit the downstream-chain operation. There is no Canton-side timeout, and you **must not** add a wall-clock refund of optimistically-debited state — see [Recovering a stuck destination-chain transaction](#recovering-a-stuck-destination-chain-transaction). |
-| `Consume_*` exercised twice                                                                    | Second exercise fails because the contract is already archived                                                                                                                                                                                                                                | Idempotent at your level (your claim choice should archive the anchor first, so a duplicate claim won't reach `Consume_*`).                                                                                                                                                   |
-| Duplicate `SignBidirectionalEvent` with identical `requestId`                                  | Replay attempt                                                                                                                                                                                                                                                                                | Signing is RFC6979-deterministic, so duplicates produce identical signatures. Your single-use anchor prevents acting on it twice.                                                                                                                                             |
+| Symptom                                                                                        | Meaning                                                                                                                                                                                                                                                                                                                                             | Action                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RespondBidirectionalEvent` arrives but `abiHasErrorPrefix outcome.serializedOutput` is `True` | EVM tx reverted (or was replaced / dropped). The MPC still signs and publishes the outcome — payload is the 4-byte `0xdeadbeef` prefix followed by a 32-byte ABI-encoded `bool(true)` placeholder (MPC convention; on-ledger only the prefix is checked, no embedded EVM error data). The signature is valid; the prefix is the only revert signal. | Domain decision (refund, retry, surface error).                                                                                                                                                                                                                               |
+| `secp256k1WithEcdsaOnly` returns `False`                                                       | Signature does not match `responseHash` under your stored response-verification pubkey                                                                                                                                                                                                                                                              | Reject the claim. Either the wrong pubkey is stored (e.g. someone stored the root by mistake — see Security checklist #4) or the response is forged. Escalate, do not retry.                                                                                                  |
+| Only one of the two response events ever arrives                                               | The downstream-chain operation has not been submitted yet, or the destination chain has not confirmed it                                                                                                                                                                                                                                            | Submit or resubmit the downstream-chain operation. There is no Canton-side timeout, and you **must not** add a wall-clock refund of optimistically-debited state — see [Recovering a stuck destination-chain transaction](#recovering-a-stuck-destination-chain-transaction). |
+| `Consume_*` exercised twice                                                                    | Second exercise fails because the contract is already archived                                                                                                                                                                                                                                                                                      | Idempotent at your level (your claim choice should archive the anchor first, so a duplicate claim won't reach `Consume_*`).                                                                                                                                                   |
+| Duplicate `SignBidirectionalEvent` with identical `requestId`                                  | Replay attempt                                                                                                                                                                                                                                                                                                                                      | Signing is RFC6979-deterministic, so duplicates produce identical signatures. Your single-use anchor prevents acting on it twice.                                                                                                                                             |
 
 ### Recovering a stuck destination-chain transaction
 
@@ -300,7 +300,7 @@ transaction**. If the fee cannot settle, `RequestSignature` aborts and no event 
   Interface exercises are late-bound: upgrading the implementation package changes live fee
   behaviour with **zero rebuilds** of `daml-signer`, consumers, or clients.
 - **Implementation: `signet-fee-amulet`.** `CcFeeCollector` reads the FA-signed `FeePriceConfig`
-  (repriced ~every 10 min off-ledger by `fee-reprice.ts` running as `sigNetworkFA`; `feeAmount = 0.0`
+  (repriced ~every 10 min off-ledger by the reprice job running as `sigNetworkFA`; `feeAmount = 0.0`
   waives the charge), resolves the CC `TransferFactory` from `feeExtraArgs.context`, and requires the
   transfer to settle one-step via the receiver's `TransferPreapproval` — `Pending`/`Failed` abort.
 - **Fee admin = `sigNetworkFA`.** The registration, collector, and price config are all signed by
@@ -311,6 +311,35 @@ transaction**. If the fee cannot settle, `RequestSignature` aborts and no event 
   `OpenMiningRound`. `canton-sig` assembles both: `getFeeCollectorContext`,
   `getTransferFactoryForFee`, `selectInputHoldings` / `holdingInputsFromEvents`, then
   `assembleFeeChoiceArgs` / `collectFeeDisclosures`.
+
+### Fee endpoint contract
+
+`POST /fee/v1/collector` (`FEE_COLLECTOR_ENDPOINT_PATH` in `canton-sig`), no request body. The FA
+operates it with fee-admin read authority; the response is the JSON serialization of the
+`FeeCollectorContext` that `canton-sig`'s `getFeeCollectorContext` builds:
+
+```jsonc
+{
+  "registrationCid": "00…", // active FeeCollectorRegistration → the feeRegistrationCid choice arg
+  "collectorCid": "00…", // registered collector (disclosed; never a choice arg)
+  "priceConfigCid": "00…", // current FeePriceConfig
+  "priceConfig": {
+    /* decoded FeePriceConfig record — feeAmount drives holding selection */
+  },
+  "choiceContextData": {
+    /* opaque charge context — merge into feeExtraArgs untouched */
+  },
+  "disclosedContracts": [
+    /* three JSON Ledger API DisclosedContract envelopes (shape as in the Signer
+       disclosure above): registration, collector, price config */
+  ],
+}
+```
+
+A requester-side client consumes the response as a `FeeCollectorContext` and continues with
+`selectInputHoldings` → `getTransferFactoryForFee` → `assembleFeeChoiceArgs` /
+`collectFeeDisclosures`. A client that itself holds fee-admin read authority (single-party
+DevNet) can call `getFeeCollectorContext` directly instead — same shape.
 
 ### Fee contracts and what may change
 
@@ -357,11 +386,11 @@ Upgradability rules:
 ### Fee admin runbook (`sigNetworkFA`, off-ledger)
 
 - **Bootstrap (once per deployment):** as `sigNetworkFA`, create the `CcFeeCollector`, its
-  `FeeCollectorRegistration`, and the first `FeePriceConfig`; stand up the fee endpoint serving
-  the `{registration, collector, priceConfig}` disclosures + the opaque charge context; ensure the
+  `FeeCollectorRegistration`, and the first `FeePriceConfig`; stand up the fee endpoint
+  ([contract above](#fee-endpoint-contract)); ensure the
   `feeReceiver`'s `TransferPreapproval` and the `FeaturedAppRight` are live. The MPC needs no
   fee-related changes — no fee data feeds `requestId` or the events.
-- **Repricing:** run `fee-reprice.ts` (`pnpm --filter canton-sig reprice`) as `sigNetworkFA` every
+- **Repricing:** run the reprice job (`pnpm --filter canton-sig reprice`) as `sigNetworkFA` every
   ~10 min (≈ one `OpenMiningRound` cycle) with overlapping validity windows; `feeAmount = 0.0` is
   the free-mode switch. Renew the receiver's `TransferPreapproval` ahead of expiry; automate reward
   minting via a CIP-73 `MintingDelegation`.
@@ -644,13 +673,13 @@ requestId = keccak256(
 responseHash = keccak256(requestId ‖ serializedOutput)
 ```
 
-Every implementation that mirrors this off-Canton must produce byte-identical hashes — verify cross-language with golden vectors before integrating.
+Every implementation that mirrors this off-Canton must produce byte-identical hashes — verify cross-language with golden vectors before integrating. The Daml vectors live in `daml-signer-tests/daml/TestRequestId.daml`; the DevNet e2e asserts the TS mirror against the on-ledger `requestId` at runtime.
 
 ## Build & Test
 
 From the repo root:
 
 ```bash
-dpm build --all                                  # build all packages
-(cd daml-packages/daml-signer && dpm test)       # per-package — dpm test does NOT support --all
+dpm build --all     # build all packages
+pnpm run daml:test  # dpm test does not support --all; tests live in daml-signer-tests
 ```

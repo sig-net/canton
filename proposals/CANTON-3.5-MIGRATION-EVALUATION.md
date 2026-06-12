@@ -2,8 +2,8 @@
 
 **Project:** `canton-mpc-poc` (Signet MPC custody PoC)
 **Date:** 2026-06-01
-**Current:** SDK `3.4.11` (all five Daml packages) — **Target:** Canton / Daml **3.5.1**
-**Scope reviewed:** `daml-signer`, `daml-vault`, `daml-eip712`, `daml-abi`, `daml-uint256`, and the `canton-sig` TS client (`canton-client.ts`, `ledger-stream.ts`, `mpc-service/*`, generated `@daml.js` bindings). Also the **MPC node** (separate `mpc/` repo) — its Canton integration `chain-signatures/node/src/indexer_canton/*` + `rpc.rs` (see §6).
+**From:** SDK `3.4.11` — **Target:** Canton / Daml **3.5.1**
+**Scope reviewed:** `daml-signer`, `daml-vault`, `daml-eip712`, `daml-abi`, `daml-uint256`, and the `canton-sig` TS client (`canton-client.ts`, generated `@daml.js` bindings). Also the **MPC node** (separate `mpc/` repo) — its Canton integration `chain-signatures/node/src/indexer_canton/*` + `rpc.rs` (see §6).
 
 > Note: "Daml 3.5.1" here means **Canton 3.5.1** (released 2026-05-27), the first GA of the 3.5 line — i.e. the whole 3.4 → 3.5 generation jump. There is no separate Daml _SDK_ 3.5.1 GitHub release; `3.5.1` is the platform/`sdk-version`.
 
@@ -39,7 +39,7 @@
 
 ## 1. Primary benefit — `DA.Crypto.Text` becomes stable
 
-All five `daml.yaml` files carry `-Wno-crypto-text-is-alpha`, because the security model depends on **alpha** APIs:
+Every crypto-bearing `daml.yaml` carries `-Wno-crypto-text-is-alpha`, because the security model depends on **alpha** APIs:
 
 - `Erc20Vault.ClaimDeposit` / `CompleteWithdrawal` verify the MPC signature on-ledger with **`secp256k1WithEcdsaOnly`**.
 - `RequestId.daml` / `Eip712.daml` derive request IDs and EIP-712 hashes with **`keccak256`, `packHexBytes`, `byteCount`, `toHex`, `fromHex`**.
@@ -55,7 +55,7 @@ In **Daml-LF 2.3 (3.5), `DA.Crypto.Text` is marked stable.** For a custody syste
 
 3.5 reintroduces contract keys (`lookupByKey`/`fetchByKey`/`exerciseByKey`, plus `lookupNByKey`/`lookupAllByKey` in `DA.ContractKeys`). For this project they are a **nice-to-have, not a reason to migrate**:
 
-- **MPC watch loop** (`mpc-service/server.ts`) is stream-driven — it watches _all_ `SignBidirectionalEvent`s via `/v2/updates` + an ACS catch-up scan. Keys add nothing to a "watch everything" loop.
+- **MPC watch loop** (Rust node, `indexer_canton/stream.rs`) is stream-driven — it watches _all_ `SignBidirectionalEvent`s via `/v2/updates` + an ACS catch-up scan. Keys add nothing to a "watch everything" loop.
 - **Anti-replay / single-use** relies on explicit `ContractId` threading + `archive`-first + `ensure`/`requestId` validation (e.g. _"archive first: single-use guarantee against MPC-outcome replay"_). 3.5 keys are **non-unique with unvalidated negative lookups**, so they **cannot** replace this logic — every assertion stays.
 - **The one place keys would help:** correlation — locating the `RespondBidirectionalEvent` / `SignatureRespondedEvent` for a given `requestId` (today: `getActiveContracts` + filter). Keying those by `requestId` (maintainer `sigNetwork`) would allow `fetchByKey` instead of scan-and-filter. Real but small, and it costs a template change + version bump.
 
@@ -68,7 +68,7 @@ In **Daml-LF 2.3 (3.5), `DA.Crypto.Text` is marked stable.** For a custody syste
 | 3.5 breaking change                                                                                                                    | Affects us? | Why                                                                                                                                                                                                          |
 | -------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Package-id rejected on read APIs** (the big one)                                                                                     | **No** ✅   | Codegen emits `.templateId = '#daml-signer:Signer:…'` (package-**name** form) and we use `.templateId` consistently in `getActiveContracts`/filters. Already on the correct form.                            |
-| `filter`/`verbose` → `updateFormat`                                                                                                    | **No** ✅   | Already migrated — code comments note _"legacy filter/verbose removed in 3.5"_; `getUpdates` and the WebSocket stream use `updateFormat`.                                                                    |
+| `filter`/`verbose` → `updateFormat`                                                                                                    | **No** ✅   | The TS client doesn't stream (ACS polling only); the Rust node's `/v2/updates` subscription already uses `updateFormat` (§6).                                                                                |
 | External-signing changes (hashing scheme v3, physical `synchronizer_id`, `PartyToParticipant` consolidation, max-signatures-per-party) | **No** ✅   | No Canton interactive/external signing anywhere — the MPC submits as a **hosted party** via `submit-and-wait`. (Our "MPC signing" is of EVM txs, verified on-ledger — unrelated to Canton external parties.) |
 | Daml Assistant removed (use `dpm`)                                                                                                     | **No** ✅   | Already on `dpm`.                                                                                                                                                                                            |
 | ACS export/import & repair command signature changes                                                                                   | **No** ✅   | Not used by the client.                                                                                                                                                                                      |
@@ -80,9 +80,9 @@ In **Daml-LF 2.3 (3.5), `DA.Crypto.Text` is marked stable.** For a custody syste
 Mechanical, and safe for a PoC with no production ledger data:
 
 1. **Stand up 3.5 + PV 35** (sandbox / synchronizer at protocol version 35).
-2. **Retarget all packages to LF 2.3**: add `--target=2.3` (build-options) and remove `-Wno-crypto-text-is-alpha` in all five `daml.yaml` files. Rebuild and confirm the exact crypto function set compiles clean under LF 2.3.
+2. **Retarget all packages to LF 2.3**: add `--target=2.3` (build-options) and remove `-Wno-crypto-text-is-alpha` in every `daml.yaml`. Rebuild and confirm the exact crypto function set compiles clean under LF 2.3.
    - This **changes every package-id** → re-vet DARs + bump versions. The existing `data-dependencies` / SCU chain (`daml-abi`/`daml-eip712`/`daml-signer` → `daml-vault`) already handles this.
-3. **Regenerate OpenAPI types** (`pnpm codegen:api`) against the 3.5 spec — fields become newly-optional, so expect a few TS `??` / `!` fixes. Re-verify the `/v2/updates` request shape (we keep a top-level `verbose` "for backwards compat").
+3. **Regenerate OpenAPI types** (`pnpm codegen:api`) against the 3.5 spec — fields become newly-optional, so expect a few TS `??` / `!` fixes.
 4. **Regenerate `@daml.js` bindings** (`pnpm codegen:daml`) after the DAR rebuild.
 5. **Regression gate:** re-run the oracle (`pnpm -r test`), integration, and Sepolia e2e suites.
 
@@ -93,7 +93,7 @@ Mechanical, and safe for a PoC with no production ledger data:
 ```
 3.5 binaries + PV 35
         ↓
---target=2.3 + drop -Wno-crypto-text-is-alpha  (all 5 packages)
+--target=2.3 + drop -Wno-crypto-text-is-alpha  (all packages)
         ↓
 rebuild DARs → re-vet → regenerate @daml.js + OpenAPI types
         ↓
@@ -135,7 +135,7 @@ The threshold-signing node (`mpc/chain-signatures`, sig-net cait-sith / k256) in
 
 ### Node-side cost (maintenance, not improvement)
 
-`indexer_canton/ledger_api.rs` is **hand-translated from the 3.4.11 OpenAPI spec**. 3.5 makes some fields optional (and version-suffixes the spec, `openapi-3.5.0.yaml`). Re-validate those structs against the 3.5 OpenAPI/AsyncAPI spec and re-run `integration-tests` against a 3.5 sandbox. **Low risk** — the structs already use `#[serde(default)]` / `Option<…>` liberally.
+`indexer_canton/ledger_api.rs` is **hand-translated from the OpenAPI spec** and re-verified field-by-field against the 3.5.1 OpenAPI/AsyncAPI specs — newly-optional fields are absorbed by `#[serde(default)]` / `Option<…>`, and the node's Canton CI pins its sandbox to 3.5.1.
 
 ### Forward-looking (optional, not free)
 
@@ -145,11 +145,11 @@ Because the node is a secp256k1 threshold signer, 3.5's improved external-party 
 
 ## Evidence — files reviewed
 
-- **Config:** `multi-package.yaml`, `daml-packages/*/daml.yaml` (all `sdk-version: 3.4.11`, all `-Wno-crypto-text-is-alpha`; SCU `data-dependencies` present).
-- **Templates:** `daml-signer/daml/Signer.daml` (Signer/SignRequest/SignBidirectionalEvent + response events), `daml-vault/daml/Erc20Vault.daml` (Vault deposit/withdraw, on-ledger `secp256k1WithEcdsaOnly`), `daml-signer/daml/RequestId.daml`, `daml-eip712/daml/Eip712.daml`.
-- **Client:** `ts-packages/canton-sig/src/infra/canton-client.ts` (JSON Ledger API v2 via `openapi-fetch`; `submit-and-wait`, `/v2/state/active-contracts`, `/v2/updates`), `infra/ledger-stream.ts` (WebSocket + `updateFormat`), `mpc-service/server.ts` (stream-driven watch loop).
+- **Config:** `multi-package.yaml`, `daml-packages/*/daml.yaml` (now all `sdk-version: 3.5.1`; crypto-bearing packages carry `-Wno-crypto-text-is-alpha`; SCU `data-dependencies` present).
+- **Templates:** `daml-signer/daml/Signer.daml` (Signer/SignBidirectionalEvent + response events), `daml-vault/daml/Erc20Vault.daml` (Vault deposit/withdraw, on-ledger `secp256k1WithEcdsaOnly`), `daml-signer/daml/RequestId.daml`, `daml-eip712/daml/Eip712.daml`.
+- **Client:** `ts-packages/canton-sig/src/infra/canton-client.ts` (JSON Ledger API v2 via `openapi-fetch`; `submit-and-wait`, `/v2/state/active-contracts`).
 - **Codegen:** `generated/model/daml-signer-0.0.1/lib/Signer/module.js` → `templateId: '#daml-signer:…'` (package-name) vs `templateIdWithPackageId: '<hash>:…'`; code uses `.templateId`.
-- **MPC node (`mpc/` repo):** `chain-signatures/node/src/indexer_canton/ledger_api.rs` (hand-translated 3.4.11 OpenAPI structs; bare `Module:Entity` suffix constants), `indexer_canton/stream.rs` (WebSocket `updateFormat`, wildcard filter, suffix matching, hosted-party submit), `indexer_canton/auth.rs` (OIDC client-credentials, audience-based JWT), `rpc.rs` (`fetch_active_contracts`, `submit_and_wait`, `exercise_choice` using `signer_template_id`), `indexer_canton/mod.rs` (config — `signer_template_id` = package-hash, noted to break on every DAR upgrade).
+- **MPC node (`mpc/` repo):** `chain-signatures/node/src/indexer_canton/ledger_api.rs` (hand-translated OpenAPI structs, re-verified against 3.5.1; bare `Module:Entity` suffix constants), `indexer_canton/stream.rs` (WebSocket `updateFormat`, wildcard filter, suffix matching, hosted-party submit), `indexer_canton/auth.rs` (OIDC client-credentials, audience-based JWT), `rpc.rs` (`fetch_active_contracts`, `submit_and_wait`, `exercise_choice` using `signer_template_id`), `indexer_canton/mod.rs` (config — `signer_template_id` = package-hash, noted to break on every DAR upgrade).
 
 ## Sources
 
