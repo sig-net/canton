@@ -186,7 +186,7 @@ worst a malicious value does?":
 - Check the zero-fee waiver path skips the transfer entirely (free mode must not require a factory
   at all — the test proves it by omitting the factory from the context).
 
-**4. `daml-packages/daml-vault/daml/Erc20Vault.daml` diff — plumbing.** Three fee args threaded
+**4. `daml-packages/signet-vault-v1/daml/Erc20Vault.daml` diff — plumbing.** Three fee args threaded
 through `RequestDeposit`/`RequestWithdrawal` untouched (opacity is the design — flag any code that
 _interprets_ `feeExtraArgs`), the `archive` → `Consume_SignBidirectional` swap (now you know why),
 and the `sameHex` case-insensitivity fixes riding along (independent correctness fix: BytesHex

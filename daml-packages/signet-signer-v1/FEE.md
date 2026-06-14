@@ -86,7 +86,7 @@ Upgradability rules:
   alongside v1, never as an upgrade.
 - **Upgrade checking is off until a v-next exists — by construction, not oversight.**
   `signet-fee-amulet` / `signet-api-fee-v1` are new package names (no prior version to diff
-  against); `signet-signer-v1` / `daml-vault-poc` keep main's name **and** `0.0.1` but change it
+  against); `signet-signer-v1` / `signet-vault-v1` keep main's name **and** `0.0.1` but change it
   incompatibly (added `sigNetworkFA` signatory, renamed choices), so main's DAR is not a valid
   `upgrades:` target — SCU rejects a same-version redefinition and the diff is breaking by design.
   There is nothing for `typecheck-upgrades:` to validate until the first change _after_ this

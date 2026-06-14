@@ -10,5 +10,5 @@ packages:
   - daml-packages/signet-fee-amulet-tests
   - daml-packages/signet-signer-v1
   - daml-packages/signet-signer-v1-tests
-  - daml-packages/daml-vault
-  - daml-packages/daml-vault-tests
+  - daml-packages/signet-vault-v1
+  - daml-packages/signet-vault-v1-tests

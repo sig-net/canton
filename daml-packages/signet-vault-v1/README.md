@@ -1,4 +1,4 @@
-# daml-vault
+# signet-vault-v1
 
 ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of the generic [`signet-signer-v1`](../signet-signer-v1/README.md) layer — clients supply EIP-1559 `transfer(address,uint256)` params, the Vault validates the recipient/token/amount shape, hands signing to the Signer, and verifies the returned MPC response signature on-ledger via `secp256k1WithEcdsaOnly` before deposit minting or withdrawal settlement/refund.
 
@@ -231,14 +231,14 @@ const calldata = `a9059cbb${args}`;
 - `Erc20Holding` operators must equal `Vault` operators (sort-equal) on every withdrawal — prevents using a holding minted by a different operator set.
 - `ClaimDeposit` / `CompleteWithdrawal` archive the Pending\* contract **before** any other validation as the single-use guard, then verify the MPC signature on the outcome bytes before minting, refunding, or finalizing. Replay of the same `(pendingCid, evidence pair)` fails because the pending is already archived.
 - Pending\* contracts store the original `signEventCid`; successful claim/completion retires that `SignBidirectionalEvent` via `Consume_SignBidirectional` after the response evidence is validated and consumed. The event stays active while the MPC still needs it for `Respond` / `RespondBidirectional`, then is removed to avoid stale request events.
-- Per-vault key derivation: `path` always includes `vaultId`, so two vaults sharing the same operator set still derive distinct EVM keys. The Signer cannot enforce this — it's the consumer's job, and `daml-vault` does it for you by always prefixing `path` with `vaultId`.
+- Per-vault key derivation: `path` always includes `vaultId`, so two vaults sharing the same operator set still derive distinct EVM keys. The Signer cannot enforce this — it's the consumer's job, and `signet-vault-v1` does it for you by always prefixing `path` with `vaultId`.
 
 ## Usage
 
 ```yaml
 # daml.yaml
 data-dependencies:
-  - ../daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar
+  - ../signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar
   - ../signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar
   - ../signet-abi/.daml/dist/signet-abi-0.0.1.dar
   - ../signet-eip712/.daml/dist/signet-eip712-0.0.1.dar

@@ -131,7 +131,7 @@ sampleWithdrawalEvmParams = sampleEvmType2Params with
       <> sampleHoldingAmount
 
 -- ---------------------------------------------------------------------------
--- Mock fee collector (shared by the signet-signer-v1 + daml-vault suites)
+-- Mock fee collector (shared by the signet-signer-v1 + signet-vault-v1 suites)
 -- ---------------------------------------------------------------------------
 
 -- Test-only FeeCollector implementation: the Signer only needs "a registered

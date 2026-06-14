@@ -2,7 +2,7 @@
 
 Generic MPC signing infrastructure for Canton. The Signer is a small set of Daml templates that lets a calling contract ask a trusted MPC service (the `sigNetwork` party) to produce signatures for transactions on a downstream chain (currently EVM; extensible to BTC, Solana, etc.). It is chain-agnostic and reusable across multiple consumer implementations.
 
-For a worked consumer example see [`daml-vault`](../daml-vault/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/devnet-e2e.test.ts` in this repo.
+For a worked consumer example see [`signet-vault-v1`](../signet-vault-v1/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/devnet-e2e.test.ts` in this repo.
 
 ## How this fits together
 
@@ -47,7 +47,7 @@ data-dependencies:
   - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
   - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
   - ../vendor/splice-api-token-holding-v1-1.0.0.dar
-  # add signet-abi if you need the calldata-decoding helpers used by daml-vault:
+  # add signet-abi if you need the calldata-decoding helpers used by signet-vault-v1:
   # - ../signet-abi/.daml/dist/signet-abi-0.0.1.dar
 build-options:
   - -Wno-crypto-text-is-alpha
@@ -116,7 +116,7 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
   do
     -- 1a. Domain-level authorization. The Signer signs whatever bytes you hand it,
     -- so you must validate calldata yourself if it matters (e.g. ABI selector match,
-    -- argument bounds). See daml-vault's RequestDeposit for the ERC-20 case.
+    -- argument bounds). See signet-vault-v1's RequestDeposit for the ERC-20 case.
 
     -- 1b. Build the request envelope. Concrete values shown below.
     let caip2Id = "eip155:" <> chainIdToDecimalText evmTxParams.chainId   -- destination CAIP-2
@@ -230,7 +230,7 @@ nonconsuming choice MyDomainClaim : ...
     create MyHolding with ...
 ```
 
-`mpcResponseVerifyKey` is the uncompressed secp256k1 pubkey you derive off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"` (formula and tooling pointer in [Security checklist #4](#security-checklist-for-integrators)) and store at deployment time. The `daml-vault` package stores this value on `Vault.mpcResponseVerifyKey`.
+`mpcResponseVerifyKey` is the uncompressed secp256k1 pubkey you derive off-ledger from the MPC root with `sender = operatorsHash` and `path = "canton response key"` (formula and tooling pointer in [Security checklist #4](#security-checklist-for-integrators)) and store at deployment time. The `signet-vault-v1` package stores this value on `Vault.mpcResponseVerifyKey`.
 
 `SignBidirectionalEvent` exposes a single delegated-archival choice,
 `Consume_SignBidirectional` (controller `actor`, who must be in `operators` or be
@@ -254,13 +254,13 @@ can do it, and they forfeit the already-paid fee).
 
 ### Recovering a stuck destination-chain transaction
 
-A consumer that debits Canton state before the destination-chain tx confirms (e.g. `daml-vault` archives the `Erc20Holding` in `RequestWithdrawal`) must respect one invariant:
+A consumer that debits Canton state before the destination-chain tx confirms (e.g. `signet-vault-v1` archives the `Erc20Holding` in `RequestWithdrawal`) must respect one invariant:
 
 > **An externally-signed EVM transaction never expires** — it stays mineable while its nonce is unspent. Never refund optimistically-debited state on a timeout: the tx could land afterward and spend it twice.
 
 The only safe refund trigger is proof the tx can't execute — the signing account's nonce advancing past it via a _different_ confirmed tx. The MPC attests this automatically: it detects the superseded nonce and publishes a signed `0xdeadbeef` `RespondBidirectionalEvent` that your claim choice already verifies (`abiHasErrorPrefix`).
 
-To unstick, replace the transaction at the **same nonce, higher fee** (a replacement at `N+1` just stalls behind `N`). The address is MPC-controlled, so the replacement is an ordinary signing request — no "cancel" choice needed. In `daml-vault`: submit another withdrawal of any spare holding with `evmTxParams.nonce` set to the stuck nonce; once it mines, the MPC fails the original and `CompleteWithdrawal` recreates the `Erc20Holding`. (A holder whose sole holding is fully withdrawn must re-deposit or have an operator re-issue it — no funds are lost either way.)
+To unstick, replace the transaction at the **same nonce, higher fee** (a replacement at `N+1` just stalls behind `N`). The address is MPC-controlled, so the replacement is an ordinary signing request — no "cancel" choice needed. In `signet-vault-v1`: submit another withdrawal of any spare holding with `evmTxParams.nonce` set to the stuck nonce; once it mines, the MPC fails the original and `CompleteWithdrawal` recreates the `Erc20Holding`. (A holder whose sole holding is fully withdrawn must re-deposit or have an operator re-issue it — no funds are lost either way.)
 
 ### Security checklist for integrators
 
@@ -284,7 +284,7 @@ Replay-protection options (pick what fits your threat model):
 - Off-chain operator enforcement via a request-approve flow before the consumer ever calls `RequestSignature`.
 - Nothing — relying on the destination chain's nonce when a duplicate sign is harmless (signing is RFC6979-deterministic, so duplicates produce identical signatures and only one tx can land).
 
-For a complete worked consumer, see [`daml-vault/daml/Erc20Vault.daml`](../daml-vault/daml/Erc20Vault.daml).
+For a complete worked consumer, see [`signet-vault-v1/daml/Erc20Vault.daml`](../signet-vault-v1/daml/Erc20Vault.daml).
 
 ## CC signature fee
 

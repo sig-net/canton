@@ -2,7 +2,7 @@
 -- to change about the fee (settlement policy, token-standard integration,
 -- pricing plumbing) — including the splice transfer-instruction dependency —
 -- and evolves by SCU or replacement with ZERO rebuilds of `signet-api-fee-v1`,
--- `signet-signer-v1`, `daml-vault`, or clients: `FeeCollector_Charge` is dispatched
+-- `signet-signer-v1`, `signet-vault-v1`, or clients: `FeeCollector_Charge` is dispatched
 -- late-bound at runtime.
 module Signet.Fee.Amulet where
 
