@@ -1,6 +1,6 @@
 # daml-vault
 
-ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of the generic [`daml-signer`](../daml-signer/README.md) layer — clients supply EIP-1559 `transfer(address,uint256)` params, the Vault validates the recipient/token/amount shape, hands signing to the Signer, and verifies the returned MPC response signature on-ledger via `secp256k1WithEcdsaOnly` before deposit minting or withdrawal settlement/refund.
+ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of the generic [`signet-signer-v1`](../signet-signer-v1/README.md) layer — clients supply EIP-1559 `transfer(address,uint256)` params, the Vault validates the recipient/token/amount shape, hands signing to the Signer, and verifies the returned MPC response signature on-ledger via `secp256k1WithEcdsaOnly` before deposit minting or withdrawal settlement/refund.
 
 ## Templates
 
@@ -28,7 +28,7 @@ Both `RequestDeposit` and `RequestWithdrawal` also take the three CC signature-f
 `Signer.RequestSignature`, which charges the fee atomically through the registered late-bound
 `FeeCollector`. The requester sources them client-side (see `canton-sig`'s fee helpers) and
 attaches the matching disclosures; if the fee can't settle, `RequestSignature` aborts and nothing
-is created. See [daml-signer § CC signature fee](../daml-signer/FEE.md).
+is created. See [signet-signer-v1 § CC signature fee](../signet-signer-v1/FEE.md).
 
 Both choices also pin `caip2Id = "eip155:1"` (test mode — the MPC indexer accepts only that
 caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself targets Sepolia.
@@ -239,9 +239,9 @@ const calldata = `a9059cbb${args}`;
 # daml.yaml
 data-dependencies:
   - ../daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar
-  - ../daml-signer/.daml/dist/daml-signer-0.0.1.dar
-  - ../daml-abi/.daml/dist/daml-abi-0.0.1.dar
-  - ../daml-eip712/.daml/dist/daml-eip712-0.0.1.dar
+  - ../signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar
+  - ../signet-abi/.daml/dist/signet-abi-0.0.1.dar
+  - ../signet-eip712/.daml/dist/signet-eip712-0.0.1.dar
   - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
   - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
   - ../vendor/splice-api-token-holding-v1-1.0.0.dar

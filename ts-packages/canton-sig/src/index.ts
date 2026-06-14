@@ -97,7 +97,7 @@ export {
   SignBidirectionalEvent,
   SignatureRespondedEvent,
   RespondBidirectionalEvent,
-} from "@daml.js/daml-signer-0.0.1/lib/Signer/module";
+} from "@daml.js/signet-signer-v1-0.0.1/lib/Signer/module";
 
 export {
   Vault,

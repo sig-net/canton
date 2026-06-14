@@ -1,7 +1,7 @@
 # canton-sig
 
 TypeScript client for integrating with the Canton MPC custody stack.
-Pairs with the [`daml-signer`](../../daml-packages/daml-signer/README.md) and [`daml-vault`](../../daml-packages/daml-vault/README.md) DARs (bundled at `DAR_PATH`).
+Pairs with the [`signet-signer-v1`](../../daml-packages/signet-signer-v1/README.md) and [`daml-vault`](../../daml-packages/daml-vault/README.md) DARs (bundled at `DAR_PATH`).
 
 ## Install
 
@@ -154,7 +154,7 @@ const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 `canton-sig` is a thin client; the on-ledger Daml contracts enforce custody. The TS side is responsible for:
 
 - **Use the right disclosed contracts.** `RequestDeposit` and `RequestWithdrawal` exercise `Vault`, the disclosed `Signer`, and the CC fee charge, so pass `[vaultDisclosure, signerDisclosure, ...feeDisclosures]` (the fee registration/collector/price config + the registry's factory/`AmuletRules`/`OpenMiningRound`, from `collectFeeDisclosures`). `ClaimDeposit` and `CompleteWithdrawal` only exercise `Vault` plus visible evidence contracts, so pass `[vaultDisclosure]`; the stored `SignBidirectionalEvent` is visible to the requester and is archived internally by the Vault.
-- **The CC signature fee is fail-closed.** `RequestDeposit` / `RequestWithdrawal` abort unless the fee charge settles. Resolve the inputs with `getFeeCollectorContext` + `getTransferFactoryForFee` + `selectInputHoldings`/`holdingInputsFromEvents`, fold them via `assembleFeeChoiceArgs` / `collectFeeDisclosures`, and ensure the receiver's `TransferPreapproval` + the requester's CC funding are in place (design + fee-admin runbook: [`daml-signer/FEE.md`](../../daml-packages/daml-signer/FEE.md)). The off-ledger reprice job sizes `FeePriceConfig.feeAmount` via `computeFeeCc`.
+- **The CC signature fee is fail-closed.** `RequestDeposit` / `RequestWithdrawal` abort unless the fee charge settles. Resolve the inputs with `getFeeCollectorContext` + `getTransferFactoryForFee` + `selectInputHoldings`/`holdingInputsFromEvents`, fold them via `assembleFeeChoiceArgs` / `collectFeeDisclosures`, and ensure the receiver's `TransferPreapproval` + the requester's CC funding are in place (design + fee-admin runbook: [`signet-signer-v1/FEE.md`](../../daml-packages/signet-signer-v1/FEE.md)). The off-ledger reprice job sizes `FeePriceConfig.feeAmount` via `computeFeeCc`.
 - **Never trust `SignatureRespondedEvent.signature` alone** as proof of execution. Broadcast the resulting tx; wait for the EVM receipt; _then_ wait for `RespondBidirectionalEvent` (signed over the outcome) before exercising `ClaimDeposit` / `CompleteWithdrawal`. The Daml verification is what makes the outcome safe to act on.
 - **Treat `SEPOLIA_RPC_URL` (or any destination-chain RPC) as untrusted.** Validate the receipt status, confirmations as your domain requires.
 - **Recompute `requestId` and the deposit address with the helpers and assert they match the values inside `PendingDeposit` / your `Vault` instance.** `PendingDeposit.signEventCid` is kept for Vault cleanup after claim; you do not pass it to `ClaimDeposit`. If the derived values don't match, something out-of-band changed (operator set, vaultId, path) — abort.
@@ -173,7 +173,7 @@ Canton-format hex is bare lowercase hex, no `0x` prefix; `""` represents empty b
 - `path` — what you passed in. The Vault prefixes with `${vaultId},${requester},` for deposits and uses `${vaultId},root` internally for the sweep address.
 - `algo`, `dest`, `params` — always `""`.
 
-The TS implementation matches `daml-signer/daml/RequestId.daml` byte-for-byte.
+The TS implementation matches `signet-signer-v1/daml/RequestId.daml` byte-for-byte.
 
 ## API
 
@@ -227,7 +227,7 @@ Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 
 Constants: `HOLDING_INTERFACE_ID`, `PRICE_CONFIG_CONTEXT_KEY`, `TRANSFER_FACTORY_CONTEXT_KEY`, `TRANSFER_FACTORY_REGISTRY_PATH`, `FEE_COLLECTOR_ENDPOINT_PATH`, `EMPTY_TRANSFER_CONTEXT`, `MAX_TRANSFER_INPUTS`, `CC_DECIMALS`.
 
-The FA fee endpoint (`POST` `FEE_COLLECTOR_ENDPOINT_PATH`) serves the same `FeeCollectorContext` shape `getFeeCollectorContext` builds — endpoint contract: [`daml-signer/FEE.md` § Fee endpoint contract](../../daml-packages/daml-signer/FEE.md#fee-endpoint-contract).
+The FA fee endpoint (`POST` `FEE_COLLECTOR_ENDPOINT_PATH`) serves the same `FeeCollectorContext` shape `getFeeCollectorContext` builds — endpoint contract: [`signet-signer-v1/FEE.md` § Fee endpoint contract](../../daml-packages/signet-signer-v1/FEE.md#fee-endpoint-contract).
 
 ### Event utilities
 
@@ -235,7 +235,7 @@ The FA fee endpoint (`POST` `FEE_COLLECTOR_ENDPOINT_PATH`) serves the same `FeeC
 
 ### Re-exported Daml templates
 
-From `@daml.js/daml-signer-0.0.1` and `@daml.js/daml-vault-poc-0.0.1`: `Signer`, `SignerProposal`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
+From `@daml.js/signet-signer-v1-0.0.1` and `@daml.js/daml-vault-poc-0.0.1`: `Signer`, `SignerProposal`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
 
 ### Types
 

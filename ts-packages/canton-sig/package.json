@@ -39,7 +39,7 @@
     "signet.js": "0.4.1"
   },
   "devDependencies": {
-    "@daml.js/daml-signer-0.0.1": "file:./generated/model/daml-signer-0.0.1",
+    "@daml.js/signet-signer-v1-0.0.1": "file:./generated/model/signet-signer-v1-0.0.1",
     "@daml.js/daml-vault-poc-0.0.1": "file:./generated/model/daml-vault-poc-0.0.1",
     "@daml.js/signet-api-fee-v1-1.0.0": "file:./generated/model/signet-api-fee-v1-1.0.0",
     "@daml.js/signet-fee-amulet-0.0.1": "file:./generated/model/signet-fee-amulet-0.0.1",

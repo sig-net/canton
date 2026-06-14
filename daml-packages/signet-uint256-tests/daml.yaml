@@ -1,0 +1,14 @@
+sdk-version: 3.5.1
+name: signet-uint256-tests
+version: 0.0.1
+source: daml
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+data-dependencies:
+  - ../signet-uint256/.daml/dist/signet-uint256-0.0.1.dar
+build-options:
+  - -Wno-crypto-text-is-alpha
+  # try/catch is the only way to assert pure `error` paths in Daml Script tests
+  - -Wno-deprecated-exceptions

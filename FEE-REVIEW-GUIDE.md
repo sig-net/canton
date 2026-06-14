@@ -26,7 +26,7 @@ Instead:
   exercises other choices nests like EVM internal calls, and any `abort`/failed `assertMsg`
   anywhere rolls back everything. This is the property the whole feature leans on: _fee charge and
   sign-event creation are in one tree, so "no fee settled → no event" is structural, not
-  bookkeeping_ (the "fail-closed" claim in `daml-packages/daml-signer/FEE.md`).
+  bookkeeping_ (the "fail-closed" claim in `daml-packages/signet-signer-v1/FEE.md`).
 
 ### Authority — the one concept you must internalize
 
@@ -84,7 +84,7 @@ slot). That's why the branch splits three packages:
 | ------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `signet-api-fee-v1` | interface + `FeeCollectorRegistration` (63 lines, no logic) | **frozen forever**; breaking change = ship `-v2`                                                                        |
 | `signet-fee-amulet` | `CcFeeCollector` + `FeePriceConfig`                         | Smart Contract Upgrade; new code takes effect on the **live** collector contract, zero rebuilds of signer/vault/clients |
-| `daml-signer`       | exercises the interface via the registration anchor         | never needs to know the implementation                                                                                  |
+| `signet-signer-v1`  | exercises the interface via the registration anchor         | never needs to know the implementation                                                                                  |
 
 "Vetting IS the fee-logic deploy" in `FEE.md` follows directly: which package's code runs is
 decided by what participants have vetted, not by anything on-ledger.
@@ -140,7 +140,7 @@ Green tests turn your review from "does this work?" into "does this do the right
 better use of attention. (The devnet e2e needs live env + `MPC_CANTON_LIVE_MUTATE=1`; skip it for
 a code review.)
 
-Then read `daml-packages/daml-signer/FEE.md` once, _as a claims list, not as truth_ — your
+Then read `daml-packages/signet-signer-v1/FEE.md` once, _as a claims list, not as truth_ — your
 review's job is to check the code against its claims. Note the claims that matter most:
 fail-closed, "the view is never trusted", "a requester cannot substitute a hostile collector",
 "compromised sigNetwork can't touch pricing".
@@ -156,7 +156,7 @@ the FEE.md paragraph explaining why standalone exercisability is harmless, and c
 only moves payer's own funds to the FA-configured receiver; Daml has no caller introspection so it
 can't be prevented anyway).
 
-**2. `daml-packages/daml-signer/daml/Signer.daml` diff — the integration and the trust anchor.**
+**2. `daml-packages/signet-signer-v1/daml/Signer.daml` diff — the integration and the trust anchor.**
 This is where the security argument lives. Verify, in the code, the exact chain: the only fee
 input the Signer _trusts_ is `feeRegistrationCid`; it fetches it and asserts
 `registration.sigNetworkFA == sigNetworkFA` (`Signer.daml:107`); it exercises the charge on
@@ -199,7 +199,7 @@ model:
   all three settlement branches deterministically; window/admin/missing-key rejections; the forge
   tests (`test_requester_cannot_forge`, `test_mpc_party_cannot_forge`) are the on-ledger proof of
   "compromised sigNetwork can't touch pricing".
-- `daml-packages/daml-signer-tests/daml/TestSigner.daml` fee section:
+- `daml-packages/signet-signer-v1-tests/daml/TestSigner.daml` fee section:
   `FailsClosedWhenChargeAborts`, `RejectsForeignFeeRegistration`, and — the subtle one worth
   reading carefully — `RejectsSelfSignedFeeRegistration`: a requester _can_ create a registration
   naming itself as FA, and the explicit `sigNetworkFA` equality assert is the _only_ thing

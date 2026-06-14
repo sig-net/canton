@@ -1,0 +1,9 @@
+sdk-version: 3.5.1
+name: signet-abi
+version: 0.0.1
+source: daml
+dependencies:
+  - daml-prim
+  - daml-stdlib
+build-options:
+  - -Wno-crypto-text-is-alpha
