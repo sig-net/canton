@@ -53,6 +53,12 @@ jobs:
           pnpm run daml:test
           pnpm run codegen:daml
 
+      - name: SCU upgrade-check
+        # Asserts each new DAR is a valid Smart Contract Upgrade of any baseline
+        # staged under daml-packages/<pkg>/prior/. Skips packages with no
+        # baseline (e.g. the first release), so it is safe to keep enabled now.
+        run: bash scripts/scu-upgrade-check.sh
+
       - run: pnpm install --frozen-lockfile
 
       - name: Start Canton sandbox

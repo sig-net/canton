@@ -1,0 +1,12 @@
+sdk-version: 3.5.1
+name: signet-eip712-tests
+version: 0.0.1
+source: daml
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+data-dependencies:
+  - ../signet-eip712/.daml/dist/signet-eip712-0.0.1.dar
+build-options:
+  - -Wno-crypto-text-is-alpha

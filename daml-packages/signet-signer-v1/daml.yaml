@@ -1,22 +1,25 @@
 sdk-version: 3.5.1
-name: signet-fee-amulet
+name: signet-signer-v1
 version: 0.0.1
 
 # --- Smart Contract Upgrade (SCU) checking ------------------------------------
-# Upgradable implementation package (templates + FeeCollector interface
-# instance): future releases keep this exact `name` and bump `version`.
+# Upgradable template package: future releases keep this exact `name` and bump
+# `version`; Canton resolves `#signet-signer-v1:Module:Tmpl` refs to the highest
+# vetted version, so the name must stay stable across upgrades.
 # `typecheck-upgrades: yes` is a no-op until a baseline is visible. To gate a new
 # version at build time, drop the previously released DAR into ./prior/ and
 # uncomment `upgrades:` below (see ./prior/README.md). CI also runs
 # `scripts/scu-upgrade-check.sh`, which checks against ./prior/ when present.
 typecheck-upgrades: yes
-# upgrades: ./prior/signet-fee-amulet-0.0.1.dar
+# upgrades: ./prior/signet-signer-v1-0.0.1.dar
 source: daml
 dependencies:
   - daml-prim
   - daml-stdlib
 data-dependencies:
+  - ../signet-eip712/.daml/dist/signet-eip712-0.0.1.dar
   - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
   - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
   - ../vendor/splice-api-token-holding-v1-1.0.0.dar
-  - ../vendor/splice-api-token-transfer-instruction-v1-1.0.0.dar
+build-options:
+  - -Wno-crypto-text-is-alpha

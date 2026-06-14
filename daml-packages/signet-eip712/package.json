@@ -1,0 +1,13 @@
+{
+  "name": "@canton/signet-eip712",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "canton-sig": "workspace:*",
+    "viem": "^2.46.3",
+    "vitest": "^4.0.18"
+  }
+}

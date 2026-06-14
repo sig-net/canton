@@ -1,6 +1,6 @@
 packages:
   - ts-packages/*
-  - daml-packages/daml-abi
-  - daml-packages/daml-uint256
-  - daml-packages/daml-eip712
+  - daml-packages/signet-abi
+  - daml-packages/signet-uint256
+  - daml-packages/signet-eip712
   - test

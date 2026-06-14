@@ -1,9 +1,0 @@
-sdk-version: 3.5.1
-name: daml-uint256
-version: 0.0.1
-source: daml
-dependencies:
-  - daml-prim
-  - daml-stdlib
-build-options:
-  - -Wno-crypto-text-is-alpha

@@ -4,16 +4,16 @@ MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (dep
 
 ## Where to start
 
-| You are…                                                         | Read                                                                                                                                                     |
-| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Integrating the Signer into a new Daml domain**                | [`daml-packages/daml-signer/README.md`](daml-packages/daml-signer/README.md) — authority model, lifecycle, full API                                      |
-| **Charging or administering the CC signature fee**               | [`daml-packages/daml-signer/FEE.md`](daml-packages/daml-signer/FEE.md) — collector model, fee endpoint, upgrade rules, admin runbook, security model     |
-| **Using the ERC-20 Vault** (deposit / claim / withdraw / refund) | [`daml-packages/daml-vault/README.md`](daml-packages/daml-vault/README.md) — templates, choices, calldata shape, security invariants                     |
-| **Building a TypeScript client / 3rd-party integration**         | [`ts-packages/canton-sig/README.md`](ts-packages/canton-sig/README.md) — `CantonClient` + crypto + EVM tx helpers                                        |
-| **Reproducing `requestId` cross-language**                       | [`daml-packages/daml-eip712/README.md`](daml-packages/daml-eip712/README.md) — primitive encoders + composition rule                                     |
-| **Decoding ABI return data on-ledger**                           | [`daml-packages/daml-abi/README.md`](daml-packages/daml-abi/README.md) — slot vs byte-offset addressing                                                  |
-| **Running a full multi-participant Canton stack**                | [`SETUP.md`](SETUP.md) — local CN Quickstart (Keycloak, Splice, observability)                                                                           |
-| **Testing deposit/withdraw end-to-end**                          | [`test/src/test/devnet-e2e.test.ts`](test/src/test/devnet-e2e.test.ts) against DevNet, or [`TEST_LOCALLY.md`](TEST_LOCALLY.md) for a local sandbox + MPC |
+| You are…                                                         | Read                                                                                                                                                           |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Integrating the Signer into a new Daml domain**                | [`daml-packages/signet-signer-v1/README.md`](daml-packages/signet-signer-v1/README.md) — authority model, lifecycle, full API                                  |
+| **Charging or administering the CC signature fee**               | [`daml-packages/signet-signer-v1/FEE.md`](daml-packages/signet-signer-v1/FEE.md) — collector model, fee endpoint, upgrade rules, admin runbook, security model |
+| **Using the ERC-20 Vault** (deposit / claim / withdraw / refund) | [`daml-packages/daml-vault/README.md`](daml-packages/daml-vault/README.md) — templates, choices, calldata shape, security invariants                           |
+| **Building a TypeScript client / 3rd-party integration**         | [`ts-packages/canton-sig/README.md`](ts-packages/canton-sig/README.md) — `CantonClient` + crypto + EVM tx helpers                                              |
+| **Reproducing `requestId` cross-language**                       | [`daml-packages/signet-eip712/README.md`](daml-packages/signet-eip712/README.md) — primitive encoders + composition rule                                       |
+| **Decoding ABI return data on-ledger**                           | [`daml-packages/signet-abi/README.md`](daml-packages/signet-abi/README.md) — slot vs byte-offset addressing                                                    |
+| **Running a full multi-participant Canton stack**                | [`SETUP.md`](SETUP.md) — local CN Quickstart (Keycloak, Splice, observability)                                                                                 |
+| **Testing deposit/withdraw end-to-end**                          | [`test/src/test/devnet-e2e.test.ts`](test/src/test/devnet-e2e.test.ts) against DevNet, or [`TEST_LOCALLY.md`](TEST_LOCALLY.md) for a local sandbox + MPC       |
 
 For an executable end-to-end flow: `test/src/test/devnet-e2e.test.ts` runs deposit + withdraw against the **Canton DevNet, the MPC, and the EVM chain** — the canonical worked example of disclosed-contract wiring, `RequestDeposit`/`RequestWithdrawal` arguments, signed-tx broadcast, and `ClaimDeposit`/`CompleteWithdrawal`. It is gated behind `MPC_CANTON_LIVE_MUTATE=1` (it spends funds). To exercise the flow against a local sandbox + an MPC instead, see [`TEST_LOCALLY.md`](TEST_LOCALLY.md).
 

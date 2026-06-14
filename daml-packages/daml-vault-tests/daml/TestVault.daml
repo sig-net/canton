@@ -91,7 +91,7 @@ setupWithKey pubKey = do
 -- Fee infra for the RequestDeposit/RequestWithdrawal charge: a sigNetworkFA-
 -- signed MockFeeCollector + the FeeCollectorRegistration binding it (fee admin
 -- = the featured-app party). The charge always succeeds here — fail-closed
--- behaviour is covered by the daml-signer suite. Submissions add
+-- behaviour is covered by the signet-signer-v1 suite. Submissions add
 -- `readAs sigNetworkFA` so the FA-signed registration + collector are visible
 -- (production clients attach them as disclosures instead).
 mkVaultFeeInfra : Party -> Script (ContractId FeeCollectorRegistration)

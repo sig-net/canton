@@ -4,8 +4,8 @@
   "scripts": {
     "bootstrap": "pnpm run daml:build && pnpm run codegen:daml && pnpm install --config.confirm-modules-purge=false",
     "daml:build": "dpm build --all",
-    "daml:test": "for pkg in daml-abi-tests daml-uint256-tests daml-eip712-tests signet-fee-amulet-tests daml-signer-tests daml-vault-tests; do (cd \"daml-packages/$pkg\" && dpm test) || exit 1; done",
-    "codegen:daml": "dpm codegen-js daml-packages/daml-signer/.daml/dist/daml-signer-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js && dpm codegen-js daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js && dpm codegen-js daml-packages/signet-fee-amulet/.daml/dist/signet-fee-amulet-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js",
+    "daml:test": "for pkg in signet-abi-tests signet-uint256-tests signet-eip712-tests signet-fee-amulet-tests signet-signer-v1-tests daml-vault-tests; do (cd \"daml-packages/$pkg\" && dpm test) || exit 1; done",
+    "codegen:daml": "dpm codegen-js daml-packages/signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js && dpm codegen-js daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js && dpm codegen-js daml-packages/signet-fee-amulet/.daml/dist/signet-fee-amulet-0.0.1.dar -o ts-packages/canton-sig/generated/model -s daml.js",
     "codegen:api": "curl -sf http://localhost:7575/docs/openapi -o test/openapi.yaml && pnpm exec openapi-typescript test/openapi.yaml -o ts-packages/canton-sig/generated/api/ledger-api.ts",
     "codegen": "pnpm run codegen:daml && pnpm run codegen:api",
     "clean": "rm -rf ts-packages/canton-sig/generated daml-packages/*/.daml",
