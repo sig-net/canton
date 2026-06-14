@@ -97,18 +97,18 @@ struct ExactInputSingleParams {
 
 **`EvmType2TransactionParams` calldata layout (example: swap 0.01 WETH → USDC, 0.3% fee):**
 
-| Field / slot       | Value                                                                          |
-| ------------------ | ------------------------------------------------------------------------------ |
-| `to`               | Router `3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e`                              |
-| selector source    | `"exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"` |
-| arg slot 0         | tokenIn (WETH), left-padded 32 bytes                                           |
-| arg slot 1         | tokenOut (USDC), left-padded 32 bytes                                          |
-| arg slot 2         | fee = `0bb8` (3000), left-padded 32 bytes                                      |
-| arg slot 3         | recipient = vault address, left-padded 32 bytes                                |
-| arg slot 4         | amountIn, left-padded 32 bytes                                                 |
-| arg slot 5         | amountOutMinimum = `00..00` (0 for PoC; set real value in prod)                |
-| arg slot 6         | sqrtPriceLimitX96 = `00..00` (0 = no limit)                                    |
-| `value`            | `00..00` (32 bytes zero — not sending ETH)                                     |
+| Field / slot    | Value                                                                          |
+| --------------- | ------------------------------------------------------------------------------ |
+| `to`            | Router `3bfa4769fb09eefc5a80d6e87c3b9c650f7ae48e`                              |
+| selector source | `"exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"` |
+| arg slot 0      | tokenIn (WETH), left-padded 32 bytes                                           |
+| arg slot 1      | tokenOut (USDC), left-padded 32 bytes                                          |
+| arg slot 2      | fee = `0bb8` (3000), left-padded 32 bytes                                      |
+| arg slot 3      | recipient = vault address, left-padded 32 bytes                                |
+| arg slot 4      | amountIn, left-padded 32 bytes                                                 |
+| arg slot 5      | amountOutMinimum = `00..00` (0 for PoC; set real value in prod)                |
+| arg slot 6      | sqrtPriceLimitX96 = `00..00` (0 = no limit)                                    |
+| `value`         | `00..00` (32 bytes zero — not sending ETH)                                     |
 
 **Schema:** `outputDeserializationSchema = [{"name":"amountOut","type":"uint256"}]`
 **Schema:** `respondSerializationSchema = [{"name":"amountOut","type":"uint256"}]`
