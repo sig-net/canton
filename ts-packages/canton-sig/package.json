@@ -20,7 +20,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsdown && cp ../../daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar dist/",
+    "build": "tsdown && cp ../../daml-packages/signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar dist/",
     "check:types": "tsc --noEmit",
     "prepack": "pnpm run build",
     "release": "pnpm run build && pnpm publish --access public",
@@ -40,7 +40,7 @@
   },
   "devDependencies": {
     "@daml.js/signet-signer-v1-0.0.1": "file:./generated/model/signet-signer-v1-0.0.1",
-    "@daml.js/daml-vault-poc-0.0.1": "file:./generated/model/daml-vault-poc-0.0.1",
+    "@daml.js/signet-vault-v1-0.0.1": "file:./generated/model/signet-vault-v1-0.0.1",
     "@daml.js/signet-api-fee-v1-1.0.0": "file:./generated/model/signet-api-fee-v1-1.0.0",
     "@daml.js/signet-fee-amulet-0.0.1": "file:./generated/model/signet-fee-amulet-0.0.1",
     "@types/node": "^25.3.0",

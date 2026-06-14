@@ -76,7 +76,7 @@ import type {
 //    package, which may differ from the locally-generated package hash) ──────────
 const SIGNATURE_RESPONDED_T = "#signet-signer-v1:Signer:SignatureRespondedEvent";
 const RESPOND_BIDIRECTIONAL_T = "#signet-signer-v1:Signer:RespondBidirectionalEvent";
-const VAULT_T = "#daml-vault-poc:Erc20Vault:Vault";
+const VAULT_T = "#signet-vault-v1:Erc20Vault:Vault";
 
 // ── Constants ───────────────────────────────────────────────────────────────────
 const SEPOLIA_CHAIN_ID = 11155111n; // signed into every tx; valid on Sepolia

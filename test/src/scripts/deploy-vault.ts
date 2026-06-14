@@ -1,10 +1,10 @@
 /**
- * Deploy a fresh Erc20Vault on DevNet, built from the CURRENT daml-vault source
+ * Deploy a fresh Erc20Vault on DevNet, built from the CURRENT signet-vault-v1 source
  * (the one with the `caip2 = "eip155:1"` test-mode change), with the correct
  * MPC response-verification key.
  *
- * The vault is created pinned to the freshly-built package id (not the `#daml-vault`
- * name ref) so it runs THIS code even though an older daml-vault is still vetted.
+ * The vault is created pinned to the freshly-built package id (not the `#signet-vault-v1`
+ * name ref) so it runs THIS code even though older vault packages are still vetted.
  *
  * Dry-run by default (derives + prints everything, mutates nothing).
  * Set DEPLOY_CONFIRM=1 to upload the DAR (if needed) and create the Vault.
@@ -42,12 +42,16 @@ const OIDC_SCOPE = process.env.MPC_CANTON_OIDC_SCOPE;
 
 const CONFIRM = process.env.DEPLOY_CONFIRM === "1";
 
-// Fresh package name daml-vault-poc (sidesteps the SCU upgrade conflict with the legacy
-// daml-vault 0.0.1 / 583bbb44…, whose schema differs). Keeps mpcResponseVerifyKey + eip155:1.
-const LOCAL_PKG_ID = "7d27e92d1ce3d0cd0e25319a65ccab099f1dc483a4890a145b5319d42370b070";
+// Fresh package name signet-vault-v1 (sidesteps any SCU conflict with the legacy
+// daml-vault / daml-vault-poc 0.0.1 packages still vetted on DevNet, whose schemas
+// differ). Keeps mpcResponseVerifyKey + eip155:1.
+const LOCAL_PKG_ID = "7078d1d1b66d15451613184450105816e651f04061df97419aa2107fcd9ea6ca";
 const VAULT_TEMPLATE_ID = `${LOCAL_PKG_ID}:Erc20Vault:Vault`;
 const DAR_PATH = fileURLToPath(
-  new URL("../../../daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar", import.meta.url),
+  new URL(
+    "../../../daml-packages/signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar",
+    import.meta.url,
+  ),
 );
 
 // DER/SPKI header for an secp256k1 SubjectPublicKeyInfo, up to (but not incl.) the
@@ -107,7 +111,7 @@ async function main(): Promise<void> {
   );
   await canton.getLedgerEnd(); // preflight auth
 
-  // Which daml-vault packages are already vetted?
+  // Is our freshly-built signet-vault-v1 package already vetted?
   const token = await getToken();
   const vetted = await listPackageIds(token);
   const localVetted = vetted.includes(LOCAL_PKG_ID);
@@ -163,8 +167,8 @@ async function main(): Promise<void> {
     const after = await listPackageIds(await getToken());
     if (!after.includes(LOCAL_PKG_ID)) {
       throw new Error(
-        `Upload did not vet ${LOCAL_PKG_ID}. If the response says KNOWN_PACKAGE_VERSION, the ` +
-          `vetted b6f4b79337… already occupies daml-vault 0.0.1 → bump the version. If it says ` +
+        `Upload did not vet ${LOCAL_PKG_ID}. If the response says KNOWN_PACKAGE_VERSION, ` +
+          `another package already occupies signet-vault-v1 0.0.1 → bump the version. If it says ` +
           `NOT_VALID_UPGRADE, the deployed schema differs → rename the package.`,
       );
     }

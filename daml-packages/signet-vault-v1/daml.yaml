@@ -1,0 +1,29 @@
+sdk-version: 3.5.1
+name: signet-vault-v1
+version: 0.0.1
+
+# --- Smart Contract Upgrade (SCU) checking ------------------------------------
+# Upgradable template package: non-breaking releases keep this exact `name` and
+# bump `version`; Canton resolves `#signet-vault-v1:Module:Tmpl` refs to the
+# highest vetted version, so the name must stay stable across upgrades. A
+# *breaking* change instead ships as a new name (`signet-vault-v2`) alongside v1,
+# never as an in-place upgrade.
+# `typecheck-upgrades: yes` is a no-op until a baseline is visible. To gate a new
+# version at build time, drop the previously released DAR into ./prior/ and
+# uncomment `upgrades:` below (see ./prior/README.md). CI also runs
+# `scripts/scu-upgrade-check.sh`, which checks against ./prior/ when present.
+typecheck-upgrades: yes
+# upgrades: ./prior/signet-vault-v1-0.0.1.dar
+source: daml
+dependencies:
+  - daml-prim
+  - daml-stdlib
+data-dependencies:
+  - ../signet-abi/.daml/dist/signet-abi-0.0.1.dar
+  - ../signet-eip712/.daml/dist/signet-eip712-0.0.1.dar
+  - ../signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar
+  - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
+  - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
+  - ../vendor/splice-api-token-holding-v1-1.0.0.dar
+build-options:
+  - -Wno-crypto-text-is-alpha

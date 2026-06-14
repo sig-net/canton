@@ -13,7 +13,7 @@ set -euo pipefail
 # `typecheck-upgrades` setting). Interface/frozen packages are intentionally
 # excluded — they are never SCU-upgraded (a breaking change ships as a new
 # name-versioned package, e.g. signet-api-fee-v2).
-PACKAGES=(signet-signer-v1 signet-fee-amulet)
+PACKAGES=(signet-signer-v1 signet-vault-v1 signet-fee-amulet)
 
 rc=0
 for pkg in "${PACKAGES[@]}"; do

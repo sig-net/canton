@@ -9,7 +9,7 @@ If you want a fully local loop instead — an **MPC node running against a local
 In a single `cargo test` run it starts:
 
 - a local **Canton sandbox** — it literally shells out to `dpm sandbox --json-api-port 7575 -c <generated-auth.conf>` (`integration-tests/src/canton.rs`), with JWT/JWKS auth via a local OIDC test provider;
-- the **`daml-vault` DAR** loaded into it, and a freshly created `Signer` contract (co-signed by `SigNetwork` + `SigNetworkFA` via `SignerProposal` → `AcceptSigner`) + parties (`SigNetwork` / `SigNetworkFA` / `Operator` / `Requester`);
+- the **`signet-vault-v1` DAR** loaded into it, and a freshly created `Signer` contract (co-signed by `SigNetwork` + `SigNetworkFA` via `SignerProposal` → `AcceptSigner`) + parties (`SigNetwork` / `SigNetworkFA` / `Operator` / `Requester`);
 - an **`mpc-node` cluster** wired to that sandbox;
 - a local **Anvil** EVM container that the signed EIP-1559 txs are relayed to.
 
@@ -55,14 +55,14 @@ cargo test -p integration-tests --test lib -- canton_stream --ignored --nocaptur
 
 ## Keeping the DAR fixture in sync
 
-The harness loads a checked-in copy of this repo's `daml-vault` DAR (`integration-tests/fixtures/canton/daml-vault-0.0.1.dar`). After changing Daml here, rebuild and copy it over:
+The harness loads a checked-in copy of this repo's `signet-vault-v1` DAR (`integration-tests/fixtures/canton/signet-vault-v1-0.0.1.dar`). After changing Daml here, rebuild and copy it over:
 
 ```bash
 # in THIS repo
 dpm build --all
 # in the mpc repo
-cp <this-repo>/daml-packages/daml-vault/.daml/dist/daml-vault-poc-0.0.1.dar \
-   integration-tests/fixtures/canton/daml-vault-0.0.1.dar
+cp <this-repo>/daml-packages/signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar \
+   integration-tests/fixtures/canton/signet-vault-v1-0.0.1.dar
 ```
 
 (Or point the harness at any DAR with `CANTON_DAR_PATH=/abs/path/to.dar`.)

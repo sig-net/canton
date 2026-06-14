@@ -32,7 +32,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.dpm
-          key: dpm-${{ hashFiles('daml-packages/daml-vault/daml.yaml') }}
+          key: dpm-${{ hashFiles('daml-packages/signet-vault-v1/daml.yaml') }}
 
       - name: Install Daml SDK
         run: |
@@ -62,12 +62,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - name: Start Canton sandbox
-        # Run inside the daml-vault package so dpm resolves the SDK from its
+        # Run inside the signet-vault-v1 package so dpm resolves the SDK from its
         # daml.yaml (sdk-version 3.5.1). At the repo root dpm uses the globally
         # active SDK, which the installer sets to the latest release — producing
         # an OpenAPI spec that mismatches the 3.5.1 codegen and library code.
-        working-directory: daml-packages/daml-vault
-        run: dpm sandbox --json-api-port 7575 --dar .daml/dist/daml-vault-poc-0.0.1.dar &
+        working-directory: daml-packages/signet-vault-v1
+        run: dpm sandbox --json-api-port 7575 --dar .daml/dist/signet-vault-v1-0.0.1.dar &
 
       - name: Wait for Canton JSON API
         run: |

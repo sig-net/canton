@@ -1,7 +1,7 @@
 # canton-sig
 
 TypeScript client for integrating with the Canton MPC custody stack.
-Pairs with the [`signet-signer-v1`](../../daml-packages/signet-signer-v1/README.md) and [`daml-vault`](../../daml-packages/daml-vault/README.md) DARs (bundled at `DAR_PATH`).
+Pairs with the [`signet-signer-v1`](../../daml-packages/signet-signer-v1/README.md) and [`signet-vault-v1`](../../daml-packages/signet-vault-v1/README.md) DARs (bundled at `DAR_PATH`).
 
 ## Install
 
@@ -235,7 +235,7 @@ The FA fee endpoint (`POST` `FEE_COLLECTOR_ENDPOINT_PATH`) serves the same `FeeC
 
 ### Re-exported Daml templates
 
-From `@daml.js/signet-signer-v1-0.0.1` and `@daml.js/daml-vault-poc-0.0.1`: `Signer`, `SignerProposal`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
+From `@daml.js/signet-signer-v1-0.0.1` and `@daml.js/signet-vault-v1-0.0.1`: `Signer`, `SignerProposal`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
 
 ### Types
 
