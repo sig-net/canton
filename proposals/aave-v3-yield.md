@@ -223,13 +223,13 @@ selector: 0x095ea7b3
 
 **`EvmType2TransactionParams` calldata layout:**
 
-| Field / slot        | Value                                                                            |
-| ------------------- | -------------------------------------------------------------------------------- |
-| `to`                | USDC token address                                                               |
-| selector source     | `"approve(address,uint256)"`                                                     |
-| arg slot 0          | stataToken address, left-padded to 32 bytes                                      |
-| arg slot 1          | `ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` (max uint256) |
-| `value`             | `00..00` (32 bytes zero)                                                         |
+| Field / slot    | Value                                                                            |
+| --------------- | -------------------------------------------------------------------------------- |
+| `to`            | USDC token address                                                               |
+| selector source | `"approve(address,uint256)"`                                                     |
+| arg slot 0      | stataToken address, left-padded to 32 bytes                                      |
+| arg slot 1      | `ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` (max uint256) |
+| `value`         | `00..00` (32 bytes zero)                                                         |
 
 **Schema:** `outputDeserializationSchema = [{"name":"","type":"bool"}]`
 **Schema:** `respondSerializationSchema = [{"name":"","type":"bool"}]`
@@ -250,15 +250,15 @@ With `depositToAave = true`, the contract:
 
 **`EvmType2TransactionParams` calldata layout:**
 
-| Field / slot        | Value                                                             |
-| ------------------- | ----------------------------------------------------------------- |
-| `to`                | `8a88124522dbbf1e56352ba3de1d9f78c143751e` (stataUSDC on Sepolia) |
-| selector source     | `"deposit(uint256,address,uint16,bool)"`                          |
-| arg slot 0          | amount of USDC, left-padded to 32 bytes                           |
-| arg slot 1          | receiver = user's derived address, left-padded                    |
-| arg slot 2          | `00..00` (referralCode = 0)                                       |
-| arg slot 3          | `00..01` (depositToAave = true)                                   |
-| `value`             | `00..00` (32 bytes zero)                                          |
+| Field / slot    | Value                                                             |
+| --------------- | ----------------------------------------------------------------- |
+| `to`            | `8a88124522dbbf1e56352ba3de1d9f78c143751e` (stataUSDC on Sepolia) |
+| selector source | `"deposit(uint256,address,uint16,bool)"`                          |
+| arg slot 0      | amount of USDC, left-padded to 32 bytes                           |
+| arg slot 1      | receiver = user's derived address, left-padded                    |
+| arg slot 2      | `00..00` (referralCode = 0)                                       |
+| arg slot 3      | `00..01` (depositToAave = true)                                   |
+| `value`         | `00..00` (32 bytes zero)                                          |
 
 **Schema:** `outputDeserializationSchema = [{"name":"shares","type":"uint256"}]`
 **Schema:** `respondSerializationSchema = [{"name":"shares","type":"uint256"}]`
@@ -275,15 +275,15 @@ With `withdrawFromAave = true`, the contract burns shares, calls
 
 **`EvmType2TransactionParams` calldata layout:**
 
-| Field / slot        | Value                                                             |
-| ------------------- | ----------------------------------------------------------------- |
-| `to`                | `8a88124522dbbf1e56352ba3de1d9f78c143751e` (stataUSDC on Sepolia) |
-| selector source     | `"redeem(uint256,address,address,bool)"`                          |
-| arg slot 0          | shares amount (= `Erc20Holding.amount`), 32 bytes                 |
-| arg slot 1          | receiver = user's derived address, left-padded                    |
-| arg slot 2          | owner = user's derived address, left-padded                       |
-| arg slot 3          | `00..01` (withdrawFromAave = true)                                |
-| `value`             | `00..00` (32 bytes zero)                                          |
+| Field / slot    | Value                                                             |
+| --------------- | ----------------------------------------------------------------- |
+| `to`            | `8a88124522dbbf1e56352ba3de1d9f78c143751e` (stataUSDC on Sepolia) |
+| selector source | `"redeem(uint256,address,address,bool)"`                          |
+| arg slot 0      | shares amount (= `Erc20Holding.amount`), 32 bytes                 |
+| arg slot 1      | receiver = user's derived address, left-padded                    |
+| arg slot 2      | owner = user's derived address, left-padded                       |
+| arg slot 3      | `00..01` (withdrawFromAave = true)                                |
+| `value`         | `00..00` (32 bytes zero)                                          |
 
 **Schema:** `outputDeserializationSchema = [{"name":"assets","type":"uint256"}]`
 **Schema:** `respondSerializationSchema = [{"name":"assets","type":"uint256"}]`

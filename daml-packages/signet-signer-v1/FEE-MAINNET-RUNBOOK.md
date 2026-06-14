@@ -13,13 +13,13 @@ needs no fee setup._
 
 ## 0. The parties and the one rule that drives everything
 
-| Party | Fee role |
-| --- | --- |
-| `sigNetworkFA` | Fee admin **and** `feeReceiver` **and** featured-app party **and** (recommended) `TransferPreapproval` provider. Signs the collector, registration, and price config. |
+| Party                    | Fee role                                                                                                                                                                      |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sigNetworkFA`           | Fee admin **and** `feeReceiver` **and** featured-app party **and** (recommended) `TransferPreapproval` provider. Signs the collector, registration, and price config.         |
 | validator operator party | The party your validator node runs as. **Make this `sigNetworkFA`** (or host `sigNetworkFA` on your validator) — see §2, it decides whether preapproval renewal is automatic. |
-| `sigNetwork` (MPC) | None. No fee data feeds `requestId` or the events. |
-| `operators` | Vault signatories; ride passively. |
-| `requester` | Pays the fee in native CC; needs CC `Holding`s in their own Canton wallet. |
+| `sigNetwork` (MPC)       | None. No fee data feeds `requestId` or the events.                                                                                                                            |
+| `operators`              | Vault signatories; ride passively.                                                                                                                                            |
+| `requester`              | Pays the fee in native CC; needs CC `Holding`s in their own Canton wallet.                                                                                                    |
 
 **The rule:** the charge is **fail-closed** (`Signet.Fee.Amulet`'s `feeCollector_chargeImpl` `abort`s on
 anything but a one-step `Completed`, and the abort propagates up through `RequestSignature` — see
@@ -42,7 +42,7 @@ Your three inflows:
    Foundation — and Tokenomics-Committee approval).
 3. **The fees themselves** — requesters → `feeReceiver`, the CC the whole feature moves.
 
-**Bootstrap (chicken-and-egg).** You need *some* CC before rewards flow, to pay sequencer traffic and to
+**Bootstrap (chicken-and-egg).** You need _some_ CC before rewards flow, to pay sequencer traffic and to
 **create the first `TransferPreapproval`** (~$1/yr, burned — §2). Sources: your first validator rewards
 after onboarding, a sponsor seeding your wallet, or moving CC in OTC. Note: CC bought on an exchange or
 held as a bridged token is **not** native on-ledger CC — it must reach your Canton wallet as real
@@ -68,20 +68,20 @@ the single most common way to take your own app down.
 - **Splice Wallet UI** — simplest for a locally-signed (non-external) party.
 - **Validator API** for external-signing parties: create an `ExternalPartySetupProposal`
   (`POST /v0/admin/external-party/setup-proposal`), the party signs accept → yields a `ValidatorRight`
-  + the `TransferPreapproval`.
+  - the `TransferPreapproval`.
 - **Ledger API** — a `TransferPreapprovalProposal` via `/v2/commands/submit-and-wait` for custom
   provider arrangements.
 
 **Renewal — the decision that determines your on-call burden:**
 
-| Preapproval provider | Renewal |
-| --- | --- |
+| Preapproval provider           | Renewal                                                                                                     |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
 | **= validator operator party** | **Automatic** — the validator app renews for another 90 days once expiry is < 30 days away. Nothing to run. |
-| a different party | **Manual** — you must run automation that periodically exercises `TransferPreapproval_Renew`. |
+| a different party              | **Manual** — you must run automation that periodically exercises `TransferPreapproval_Renew`.               |
 
 > **Recommendation:** make `feeReceiver` = `sigNetworkFA` = your **validator operator party** (or host
 > `sigNetworkFA` on your validator so it is the provider) → renewal is automatic. If `sigNetworkFA` is a
-> standalone party that is *not* the validator operator, you **own** the renewal cron, and a missed
+> standalone party that is _not_ the validator operator, you **own** the renewal cron, and a missed
 > renewal is an outage.
 
 **Cancel:** `TransferPreapproval_Cancel` (receiver or provider), or validator
@@ -96,7 +96,7 @@ fails closed for everyone.
 ## 3. `FeaturedAppRight` — you're applying now
 
 **Getting it.** Fill in the featured-app application form → the **GSF Tokenomics Committee** reviews and,
-if approved, your provider party gets a `FeaturedAppRight` contract. For testing *now*, **self-feature on
+if approved, your provider party gets a `FeaturedAppRight` contract. For testing _now_, **self-feature on
 DevNet** to run the exact same reward paths.
 
 **Wiring it up (once granted):**
@@ -143,16 +143,16 @@ DevNet** to run the exact same reward paths.
 
 ## 5. Periodic maintenance — what to watch, cadence, and what breaks
 
-| What | Cadence | If it lapses |
-| --- | --- | --- |
-| **Reprice `FeePriceConfig`** — `pnpm --filter canton-sig reprice` as `sigNetworkFA`, overlapping windows (≈30-min validity / 10-min cadence) | ~10 min (≈ one `OpenMiningRound`) | No in-window config → `getFeeCollectorContext` throws / charge aborts → **app down**. (`feeAmount = 0.0` = free mode, no transfer.) |
-| **Renew `feeReceiver` `TransferPreapproval`** | before the 90-day expiry (auto if provider = validator op; else your `TransferPreapproval_Renew` cron) | Transfers return `Pending` → fail-closed → **app down**. |
-| **Keep CC balance funded** | continuous | Needed for sequencer **traffic**, preapproval renewal (~$1/yr), holding fees. Empty → node can't submit → **app down**. |
-| **Collect / mint rewards** | each round (~10 min) | Automate via CIP-73 `MintingDelegation` / wallet. Unminted reward coupons **expire** unclaimed. |
-| **Package-vetting governance** | on every fee-impl change | Vet the new `signet-fee-amulet`; **unvet** superseded versions whose logic must die (a still-vetted old version can be pinned by a submitter — see the dispatch/vetting discussion). Gate vetting + registration-signing like prod deploys. |
-| **Validator ops hygiene** | ongoing | OIDC/JWT cert rotation, egress-IP allowlist stays adopted, sequencer connectivity, node **uptime** (liveness rewards depend on it), DAR + protocol-version upgrades. |
-| **`FeaturedAppRight` standing + CIP-0104 Increment 4** | ongoing / roadmap | Policy violation → revocation. CIP-0104 cutover → reward model changes (activity-marker → traffic-based). |
-| **Renew the `FeaturedAppRight` itself** if your grant carries a term | per grant terms | Loss of featured status → no app rewards (fee still charges; you just stop earning the reward). |
+| What                                                                                                                                         | Cadence                                                                                                | If it lapses                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reprice `FeePriceConfig`** — `pnpm --filter canton-sig reprice` as `sigNetworkFA`, overlapping windows (≈30-min validity / 10-min cadence) | ~10 min (≈ one `OpenMiningRound`)                                                                      | No in-window config → `getFeeCollectorContext` throws / charge aborts → **app down**. (`feeAmount = 0.0` = free mode, no transfer.)                                                                                                         |
+| **Renew `feeReceiver` `TransferPreapproval`**                                                                                                | before the 90-day expiry (auto if provider = validator op; else your `TransferPreapproval_Renew` cron) | Transfers return `Pending` → fail-closed → **app down**.                                                                                                                                                                                    |
+| **Keep CC balance funded**                                                                                                                   | continuous                                                                                             | Needed for sequencer **traffic**, preapproval renewal (~$1/yr), holding fees. Empty → node can't submit → **app down**.                                                                                                                     |
+| **Collect / mint rewards**                                                                                                                   | each round (~10 min)                                                                                   | Automate via CIP-73 `MintingDelegation` / wallet. Unminted reward coupons **expire** unclaimed.                                                                                                                                             |
+| **Package-vetting governance**                                                                                                               | on every fee-impl change                                                                               | Vet the new `signet-fee-amulet`; **unvet** superseded versions whose logic must die (a still-vetted old version can be pinned by a submitter — see the dispatch/vetting discussion). Gate vetting + registration-signing like prod deploys. |
+| **Validator ops hygiene**                                                                                                                    | ongoing                                                                                                | OIDC/JWT cert rotation, egress-IP allowlist stays adopted, sequencer connectivity, node **uptime** (liveness rewards depend on it), DAR + protocol-version upgrades.                                                                        |
+| **`FeaturedAppRight` standing + CIP-0104 Increment 4**                                                                                       | ongoing / roadmap                                                                                      | Policy violation → revocation. CIP-0104 cutover → reward model changes (activity-marker → traffic-based).                                                                                                                                   |
+| **Renew the `FeaturedAppRight` itself** if your grant carries a term                                                                         | per grant terms                                                                                        | Loss of featured status → no app rewards (fee still charges; you just stop earning the reward).                                                                                                                                             |
 
 ---
 
@@ -162,7 +162,7 @@ The fee is **fail-closed by construction**, so operating it is mostly about keep
 all times: a **current price config** (reprice job), a **live preapproval** for the receiver, a **funded
 CC balance** for traffic + preapproval, and **correct package vetting**. Lose any one and new signature
 requests stop — loudly, not silently. The `FeaturedAppRight` + being the preapproval provider is what
-turns the fees you collect into *additional* app rewards; it's upside, not a uptime dependency (losing it
+turns the fees you collect into _additional_ app rewards; it's upside, not a uptime dependency (losing it
 costs revenue, not availability). Wire `feeReceiver = sigNetworkFA = validator operator party` and most of
 §5 (preapproval renewal, reward minting) runs itself.
 
