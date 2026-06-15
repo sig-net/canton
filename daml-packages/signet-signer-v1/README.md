@@ -349,14 +349,14 @@ Two-party creation ceremony for the co-signed `Signer`. `sigNetwork` proposes; `
 
 The fee surface lives outside `signet-signer-v1`:
 
-| Package             | Contents                                                                    | Stability                                        |
-| ------------------- | --------------------------------------------------------------------------- | ------------------------------------------------ |
-| `signet-api-fee-v1` | `FeeCollector` interface, `FeeCollector_Charge`, `FeeCollectorRegistration` | frozen forever (breaking change ⇒ `-v2` package) |
-| `signet-fee-amulet` | `CcFeeCollector` (charge logic), `FeePriceConfig` (rotating price)          | evolves freely via SCU or replacement            |
+| Package             | Contents                                                                    |
+| ------------------- | --------------------------------------------------------------------------- |
+| `signet-api-fee-v1` | `FeeCollector` interface, `FeeCollector_Charge`, `FeeCollectorRegistration` |
+| `signet-fee-amulet` | `CcFeeCollector` (charge logic), `FeePriceConfig` (rotating price)          |
 
 `RequestSignature` only ever sees the frozen API: it validates the registration and exercises
 `FeeCollector_Charge`. Everything else (pricing, settlement policy, the token-standard dependency)
-is the implementation package's business.
+is the implementation package's business. Stability and upgrade rules: see [`FEE.md`](./FEE.md).
 
 ### `SignBidirectionalEvent`
 
