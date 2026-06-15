@@ -12,6 +12,7 @@ import DA.Time (time)
 import DA.Date (date, Month(..))
 import Daml.Script
 
+import Splice.Api.Token.HoldingV1 (Holding)
 import Splice.Api.Token.MetadataV1 (AnyValue(..), ChoiceContext(..), ExtraArgs(..), emptyMetadata)
 import Splice.Api.Token.TransferInstructionV1
   ( TransferFactory
@@ -64,8 +65,21 @@ template MockTransferFactory
       transferFactory_publicFetchImpl _selfCid _arg =
         pure (TransferFactoryView with admin; meta = emptyMetadata)
 
-      transferFactory_transferImpl selfCid _arg = case settleMode of
-        SettleCompleted ->
+      transferFactory_transferImpl selfCid arg = case settleMode of
+        SettleCompleted -> do
+          -- Capture the Transfer the charge built, so tests can assert the charge
+          -- routes sender/receiver/amount/admin from the FA-signed price config
+          -- (never caller input) and forwards feeInputs. The genuine factory moves
+          -- funds; this mock records intent and reports Completed.
+          _ <- create MockTransferReceipt with
+            admin
+            sender = arg.transfer.sender
+            receiver = arg.transfer.receiver
+            amount = arg.transfer.amount
+            instrumentAdmin = arg.transfer.instrumentId.admin
+            instrumentId = arg.transfer.instrumentId.id
+            expectedAdmin = arg.expectedAdmin
+            inputHoldingCids = arg.transfer.inputHoldingCids
           pure TransferInstructionResult with
             output = TransferInstructionResult_Completed with receiverHoldingCids = []
             senderChangeCids = []
@@ -82,6 +96,22 @@ template MockTransferFactory
             output = TransferInstructionResult_Failed
             senderChangeCids = []
             meta = emptyMetadata
+
+-- | Receipt minted by MockTransferFactory on a completed transfer, capturing the
+-- Transfer fields the charge set — so tests can assert payee/amount/admin binding
+-- and feeInputs forwarding without a live Amulet runtime.
+template MockTransferReceipt
+  with
+    admin            : Party
+    sender           : Party
+    receiver         : Party
+    amount           : Decimal
+    instrumentAdmin  : Party
+    instrumentId     : Text
+    expectedAdmin    : Party
+    inputHoldingCids : [ContractId Holding]
+  where
+    signatory admin
 
 -- ---------------------------------------------------------------------------
 -- FeePriceConfig: validatePriceConfig + UpdateFee
@@ -159,6 +189,23 @@ test_mpc_party_cannot_forge = do
   fa <- allocateParty "fa"
   sigNetwork <- allocateParty "sigNetwork"
   submitMustFail sigNetwork do createCmd (mkPriceConfig fa 1.0)
+
+-- Only sigNetworkFA can reprice. A non-admin — even the feeReceiver, who can SEE
+-- the config as an observer — cannot exercise UpdateFee (controller sigNetworkFA),
+-- so neither a requester nor a compromised sigNetwork can touch price or payee.
+test_update_fee_rejects_non_admin : Script ()
+test_update_fee_rejects_non_admin = do
+  fa <- allocateParty "fa"
+  rogue <- allocateParty "rogue"
+  -- feeReceiver = rogue makes rogue an observer, so the rejection is the controller
+  -- check (not mere invisibility).
+  cid <- submit fa do createCmd ((mkPriceConfig fa 1.0) with feeReceiver = rogue)
+  submitMustFail rogue do
+    exerciseCmd cid UpdateFee with
+      newAmount = 0.0001
+      newFeeReceiver = rogue
+      newValidFrom = time (date 2026 Jun 1) 0 0 0
+      newValidUntil = time (date 2026 Jun 3) 0 0 0
 
 -- ---------------------------------------------------------------------------
 -- CcFeeCollector: late-bound FeeCollector_Charge
@@ -253,3 +300,33 @@ testChargeMissingFactoryKeyAborts : Script ()
 testChargeMissingFactoryKeyAborts = do
   (fa, payer, collectorCid, priceCfgCid, _factory) <- setupCharge 1.0 SettleCompleted
   submitMustFail (actAs payer <> readAs fa) (chargeCmd collectorCid payer (mkExtras (mkChargeContext priceCfgCid None)))
+
+-- The charge builds the transfer entirely from the FA-signed price config, never
+-- from caller input: sender = payer, receiver = feeReceiver, amount = feeAmount,
+-- expectedAdmin / instrumentId.admin = instrumentAdmin. Asserted via the receipt
+-- the mock factory captures.
+testChargeBindsTransferToPriceConfig : Script ()
+testChargeBindsTransferToPriceConfig = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettleCompleted
+  _ <- submit (actAs payer <> readAs fa)
+    (chargeCmd collectorCid payer (mkExtras (mkChargeContext priceCfgCid (Some factoryCid))))
+  [(_, r)] <- query @MockTransferReceipt fa
+  r.sender === payer
+  r.receiver === fa            -- mkPriceConfig sets feeReceiver = fa
+  r.amount === 1.0
+  r.instrumentAdmin === fa     -- mkPriceConfig sets instrumentAdmin = fa
+  r.instrumentId === "Amulet"
+  r.expectedAdmin === fa       -- charge passes expectedAdmin = priceCfg.instrumentAdmin
+
+-- feeInputs attached to the charge are forwarded into the transfer as
+-- inputHoldingCids (the holdings the genuine factory would spend). Plumbing check;
+-- placeholder cids suffice since the mock records them without fetching.
+testChargeForwardsFeeInputs : Script ()
+testChargeForwardsFeeInputs = do
+  (fa, payer, collectorCid, priceCfgCid, factoryCid) <- setupCharge 1.0 SettleCompleted
+  let inputs = [coerceContractId priceCfgCid, coerceContractId factoryCid] : [ContractId Holding]
+  _ <- submit (actAs payer <> readAs fa)
+    (exerciseCmd (toInterfaceContractId @FeeCollector collectorCid) FeeCollector_Charge with
+      payer; inputs; extraArgs = mkExtras (mkChargeContext priceCfgCid (Some factoryCid)))
+  [(_, r)] <- query @MockTransferReceipt fa
+  r.inputHoldingCids === inputs
