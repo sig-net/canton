@@ -4,6 +4,10 @@
 --
 -- Supported: add, sub, mul, compare, short division (divisor < 2^28).
 -- Not implemented: full uint256/uint256 division (Knuth Algorithm D).
+--
+-- Design references: limb layout, schoolbook multiplication, and carry/borrow
+-- chains follow Go `math/big`; fixed-width checked overflow (add/sub/mul) follows
+-- holiman/uint256; checked-arithmetic shape follows parity-common `uint`.
 module UInt256 where
 
 import qualified DA.Text

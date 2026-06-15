@@ -5,8 +5,9 @@ import DA.Crypto.Text (BytesHex)
 import UInt256
 
 -- ---------------------------------------------------------------------------
--- Cross-language vectors (oracle: TypeScript BigInt)
--- Must match test/src/test/uint256-vectors.test.ts
+-- Cross-language vectors (oracle: TypeScript BigInt).
+-- Mirror of ../../signet-uint256/test/uint256-vectors.test.ts — keep in sync.
+-- That oracle file documents the full suite map and vector provenance.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
