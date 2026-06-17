@@ -3,6 +3,10 @@
   "ignoreBinaries": ["dpm", "build"],
   "ignore": [],
   "workspaces": {
+    "apps/disclosure-api": {
+      "entry": ["api/**/*.ts"],
+      "ignoreBinaries": ["vercel"]
+    },
     "test": {
       "entry": ["src/scripts/*.ts", "src/test/**/*.test.ts"]
     },
