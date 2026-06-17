@@ -88,9 +88,11 @@ const CONFIRM = process.env.DEPLOY_CONFIRM === "1";
 const FEE_AMOUNT = process.env.MPC_CANTON_FEE_AMOUNT ?? "0.0";
 const WANT_PAID = Number(FEE_AMOUNT) > 0;
 const CC_DSO_PARTY =
-  process.env.CC_DSO_PARTY ?? "DSO::1220be58c29e65de40bf273be1dc2b266d43a9a002ea5b18955aeef7aac881bb471a";
+  process.env.CC_DSO_PARTY ??
+  "DSO::1220be58c29e65de40bf273be1dc2b266d43a9a002ea5b18955aeef7aac881bb471a";
 const CC_REGISTRY_URL =
-  process.env.MPC_CANTON_CC_REGISTRY_URL ?? "https://wallet.dev.sig.network/api/validator/v0/scan-proxy";
+  process.env.MPC_CANTON_CC_REGISTRY_URL ??
+  "https://wallet.dev.sig.network/api/validator/v0/scan-proxy";
 
 function makeTokenProvider(): () => Promise<string> {
   let cached: { token: string; refreshAfter: number } | null = null;
@@ -143,16 +145,22 @@ async function main(): Promise<void> {
   console.log(`[deploy] Ledger:    ${JSON_API_URL}`);
   console.log(`[deploy] Party:     ${PARTY}`);
   console.log(`[deploy] Fee admin: ${FEE_ADMIN}`);
-  console.log(`[deploy] Fee mode:  ${WANT_PAID ? `PAID (feeAmount=${FEE_AMOUNT}, admin=DSO)` : "free (feeAmount=0.0)"}`);
+  console.log(
+    `[deploy] Fee mode:  ${WANT_PAID ? `PAID (feeAmount=${FEE_AMOUNT}, admin=DSO)` : "free (feeAmount=0.0)"}`,
+  );
   console.log(`[deploy] Mode:      ${CONFIRM ? "DEPLOY (live mutate)" : "DRY-RUN (no changes)"}`);
   await canton.getLedgerEnd(); // preflight: OIDC auth + ledger reachable
   console.log(`[deploy] OK auth + ledger reachable.`);
 
   if (!CONFIRM) {
-    console.log(`[deploy] DRY-RUN — re-run with DEPLOY_CONFIRM=1 to upload DARs + create contracts.`);
+    console.log(
+      `[deploy] DRY-RUN — re-run with DEPLOY_CONFIRM=1 to upload DARs + create contracts.`,
+    );
     console.log(`[deploy] Would upload:\n  ${DARS.join("\n  ")}`);
     console.log(`[deploy] Would create: Signer, CcFeeCollector, FeeCollectorRegistration,`);
-    console.log(`[deploy]               FeePriceConfig(feeAmount=${WANT_PAID ? FEE_AMOUNT : "0.0"}), Vault — then write ids to test/.env.`);
+    console.log(
+      `[deploy]               FeePriceConfig(feeAmount=${WANT_PAID ? FEE_AMOUNT : "0.0"}), Vault — then write ids to test/.env.`,
+    );
     return;
   }
 
@@ -250,8 +258,10 @@ async function main(): Promise<void> {
       ? Number(top.cfg.feeAmount) > 0 && top.cfg.instrumentAdmin === CC_DSO_PARTY
       : Number(top.cfg.feeAmount) === 0);
   if (topMatches) {
-    priceConfigCid = top!.cid;
-    console.log(`[deploy] Reusing ${WANT_PAID ? "paid" : "free"} FeePriceConfig v${top!.cfg.version} ${priceConfigCid}`);
+    priceConfigCid = top.cid;
+    console.log(
+      `[deploy] Reusing ${WANT_PAID ? "paid" : "free"} FeePriceConfig v${top.cfg.version} ${priceConfigCid}`,
+    );
   } else {
     const now = Date.now();
     const version = String((top ? Number(top.cfg.version) : -1) + 1);
@@ -326,7 +336,9 @@ async function main(): Promise<void> {
         `resolved feeAmount=${ctx.priceConfig.feeAmount}`,
     );
   }
-  console.log(`[deploy] OK getFeeCollectorContext resolves (feeAmount=${ctx.priceConfig.feeAmount}, ${ctxPaid ? "PAID" : "free"} mode).`);
+  console.log(
+    `[deploy] OK getFeeCollectorContext resolves (feeAmount=${ctx.priceConfig.feeAmount}, ${ctxPaid ? "PAID" : "free"} mode).`,
+  );
 
   // 6. Save the DURABLE disclosures (signer, vault, fee infra: registration + collector +
   // current FeePriceConfig) in the JSON Ledger API DisclosedContract shape to a generated
@@ -367,7 +379,9 @@ async function main(): Promise<void> {
     ...(WANT_PAID ? { MPC_CANTON_CC_REGISTRY_URL: CC_REGISTRY_URL } : {}),
   });
 
-  console.log(`\n[deploy] === DEPLOYED (${WANT_PAID ? "PAID" : "free"} mode, feeAmount=${WANT_PAID ? FEE_AMOUNT : "0.0"}) ===`);
+  console.log(
+    `\n[deploy] === DEPLOYED (${WANT_PAID ? "PAID" : "free"} mode, feeAmount=${WANT_PAID ? FEE_AMOUNT : "0.0"}) ===`,
+  );
   console.log(`[deploy] Signer:               ${signerCid}`);
   console.log(`[deploy] Vault:                ${vaultCid}`);
   console.log(`[deploy] FeeCollectorRegistration: ${registrationCid}`);
