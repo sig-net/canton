@@ -1,0 +1,12 @@
+{
+  "name": "@canton/disclosure-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Public read-only endpoint serving Canton DevNet disclosed-contract blobs (Signer, Vault, CC fee) for MPC-vault integrators.",
+  "scripts": {
+    "check:types": "tsc --noEmit",
+    "dev": "vercel dev",
+    "deploy:prod": "vercel build --prod && vercel deploy --prebuilt --prod"
+  }
+}

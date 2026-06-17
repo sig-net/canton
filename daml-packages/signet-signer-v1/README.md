@@ -74,14 +74,14 @@ import Splice.Api.Token.MetadataV1 (ExtraArgs)
 
 You'll be given two things to integrate against.
 
-**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `RequestSignature`). It carries no secrets — treat it as config. Current DevNet payload:
+**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `RequestSignature`). It carries no secrets — treat it as config. You can't read the `sigNetwork`-co-signed `Signer` from your own ACS, so obtain its envelope from the operator's disclosure endpoint. On DevNet that's `apps/disclosure-api`, served live at `https://disclosure-api.vercel.app`: `await fetch("https://disclosure-api.vercel.app")` returns the disclosures as `{ network, signer, vault, fee }`, where the `signer` field is the `Signer` envelope below (illustrative values — fetch the live one rather than hard-coding it):
 
 ```json
 {
-  "templateId": "e89a2b8fa915d1a5b682a6ba01eba1f8d0bdca685dc3b0d3039815d70a06abb0:Signer:Signer",
-  "contractId": "0002494636bb5d7f7a3e8abf9ad8c6c63c63598e8f95c700df0892593c8d350af5ca12122030b000af34b526db222393b97913597d5ef0a77c5efb27571522ddaa67245427",
-  "createdEventBlob": "CgMyLjESjQMKRQACSUY2u11/ej6Kv5rYxsY8Y1mOj5XHAN8Iklk8jTUK9coSEiAwsACvNLUm2yIjk7l5E1l9XvCnfF77J1cVIt2qZyRUJxILZGFtbC1zaWduZXIaUgpAZTg5YTJiOGZhOTE1ZDFhNWI2ODJhNmJhMDFlYmExZjhkMGJkY2E2ODVkYzNiMGQzMDM5ODE1ZDcwYTA2YWJiMBIGU2lnbmVyGgZTaWduZXIiWmpYClYKVDpSc2lnbmV0LWRldi0xOjoxMjIwNDc5Y2U1ZGI3YWNhYjg3YmVhNDUxZGNmY2ZiNTA5YzgzMDJjN2Y3MTI4MTM2MTk4NDAzYzA4MTIyYWUwMDQ0OCpSc2lnbmV0LWRldi0xOjoxMjIwNDc5Y2U1ZGI3YWNhYjg3YmVhNDUxZGNmY2ZiNTA5YzgzMDJjN2Y3MTI4MTM2MTk4NDAzYzA4MTIyYWUwMDQ0ODkNZpuxkFIGAEIqCiYKJAgBEiBSUcACnyWJSqXL+CayG0zRcsKd1yfQtuo0x9Oa2NArzRAe",
-  "synchronizerId": "global-domain::1220be58c29e65de40bf273be1dc2b266d43a9a002ea5b18955aeef7aac881bb471a"
+  "templateId": "…:Signer:Signer",
+  "contractId": "00…",
+  "createdEventBlob": "CgMy…",
+  "synchronizerId": "global-domain::1220…"
 }
 ```
 
@@ -366,7 +366,7 @@ Created by `Signer.RequestSignature`. **What the MPC watches.** Co-signed by `si
 - Observer: `sigNetwork`
 - Ensure: `not (null operators) && unique operators && sender == computeOperatorsHash (map partyToText operators) && validTxParams txParams`
 
-Fields: the `RequestSignature` request fields (table above) plus `sigNetworkFA : Party` and `sender : BytesHex` (= `operatorsHash`, set by `RequestSignature`).
+Fields: the `RequestSignature` request fields (table above) plus `sigNetwork : Party`, `sigNetworkFA : Party` and `sender : BytesHex` (= `operatorsHash`, set by `RequestSignature`).
 
 | Choice                      | Type      | Controller                                                 | Args            |
 | --------------------------- | --------- | ---------------------------------------------------------- | --------------- |
