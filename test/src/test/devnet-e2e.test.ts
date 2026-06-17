@@ -119,24 +119,10 @@ const EnvSchema = z.object({
   // FeeCollectorRegistration, the collector, and the FeePriceConfig). Defaults
   // to MPC_CANTON_PARTY_ID for the single-party DevNet setup.
   MPC_CANTON_SIG_NETWORK_FA_PARTY_ID: z.string().min(1).optional(),
-  // Signer + Vault. The Signer's full disclosure envelope is injected from
-  // config (a requester can't read the sigNetwork-only Signer); the Vault is live.
-  MPC_CANTON_SIGNER_CONTRACT_ID: z.string().min(1),
-  MPC_CANTON_SIGNER_TEMPLATE_ID: z
-    .string()
-    .regex(
-      /^(#[^\s:]+|[0-9a-fA-F]{64}):[^:]+:[^:]+$/,
-      "expected #package-name:Module:Entity (3.5+) or packageId:Module:Entity",
-    ),
-  MPC_CANTON_SIGNER_CREATED_EVENT_BLOB: z.string().min(1),
-  MPC_CANTON_SIGNER_SYNCHRONIZER_ID: z.string().min(1),
-  MPC_CANTON_VAULT_CONTRACT_ID: z.string().min(1),
-  MPC_CANTON_VAULT_TEMPLATE_ID: z
-    .string()
-    .regex(
-      /^(#[^\s:]+|[0-9a-fA-F]{64}):[^:]+:[^:]+$/,
-      "expected #package-name:Module:Entity (3.5+) or packageId:Module:Entity",
-    ),
+  // The deployed apps/disclosure-api endpoint. The e2e fetches the Signer + Vault
+  // disclosures from it — the way a real integrator obtains the sigNetwork-only contracts
+  // it can't read in its own ACS — so no MPC_CANTON_SIGNER_* / MPC_CANTON_VAULT_* needed.
+  MPC_CANTON_DISCLOSURE_API_URL: z.url(),
   // MPC cluster root pubkey — NAJ (`secp256k1:base58…`) or uncompressed SEC1.
   MPC_CANTON_ROOT_PUBLIC_KEY: z
     .string()
@@ -149,7 +135,9 @@ const EnvSchema = z.object({
   // the Daml charges the fee on every RequestDeposit/RequestWithdrawal, and the
   // fee registration/collector/price config + receiver preapproval must already
   // be standing.
-  MPC_CANTON_CC_REGISTRY_URL: z.url(),
+  // Optional: only the paid fee path (feeAmount > 0) resolves a transfer factory
+  // from the registry. In free mode (feeAmount = 0.0) the charge never touches it.
+  MPC_CANTON_CC_REGISTRY_URL: z.url().optional(),
   // Sepolia RPC — we fund derived addresses and broadcast the MPC-signed txs here.
   MPC_CANTON_ETH_RPC_URL: z.url(),
   FAUCET_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "0x + 64 hex"),
@@ -220,8 +208,35 @@ function makeTokenProvider(e: Env): () => Promise<string> {
   };
 }
 
+/**
+ * Fetch the disclosure envelopes the apps/disclosure-api endpoint serves
+ * (`{ signer, vault, fee }`). Lets the e2e exercise the deployed endpoint as a real
+ * integrator would — sourcing the sigNetwork-only Signer blob it cannot read itself.
+ */
+async function fetchEndpointDisclosures(
+  apiUrl: string,
+): Promise<{ signer: DisclosedContract; vault: DisclosedContract; fee: DisclosedContract[] }> {
+  const res = await fetch(apiUrl);
+  if (!res.ok) {
+    throw new Error(`disclosure API ${apiUrl} returned ${res.status} ${await res.text()}`);
+  }
+  const body = (await res.json()) as {
+    signer?: DisclosedContract;
+    vault?: DisclosedContract;
+    fee?: DisclosedContract[];
+  };
+  if (!body.signer?.createdEventBlob) {
+    throw new Error(`disclosure API ${apiUrl} returned no signer disclosure`);
+  }
+  if (!body.vault?.createdEventBlob) {
+    throw new Error(`disclosure API ${apiUrl} returned no vault disclosure`);
+  }
+  return { signer: body.signer, vault: body.vault, fee: body.fee ?? [] };
+}
+
 // ── Shared DevNet context (populated in beforeAll) ───────────────────────────────
 let canton: CantonClient;
+let getAuthToken: () => Promise<string>;
 let party: string;
 let userId: string;
 let rootPubKey: string;
@@ -231,6 +246,7 @@ let operators: string[];
 let vaultAddress: Hex;
 let signerDisclosure: DisclosedContract;
 let vaultDisclosure: DisclosedContract;
+let vaultContractId: string;
 
 const ethPublicClient = () =>
   createPublicClient({ chain: sepolia, transport: http(env!.MPC_CANTON_ETH_RPC_URL) });
@@ -377,19 +393,52 @@ async function prepareFeeInputs(): Promise<{
 }> {
   const feeAdmin = env!.MPC_CANTON_SIG_NETWORK_FA_PARTY_ID ?? party;
   const collector = await getFeeCollectorContext(canton, feeAdmin);
+
+  // Free mode (feeAmount = 0.0): the Daml charge validates the price config and
+  // returns BEFORE reading any holdings or transfer factory (Signet.Fee.Amulet),
+  // so no CC holdings, transfer factory, or registry are needed — pass empty
+  // inputs plus just the price-config context the charge reads.
+  if (Number(collector.priceConfig.feeAmount) === 0) {
+    return {
+      args: {
+        feeRegistrationCid: collector.registrationCid,
+        feeInputs: [],
+        feeExtraArgs: { context: collector.choiceContextData, meta: { values: {} } },
+      },
+      disclosures: collector.disclosedContracts,
+    };
+  }
+
+  // Paid mode: cover the fee from holdings and resolve the CC transfer factory.
+  const registryUrl = env!.MPC_CANTON_CC_REGISTRY_URL;
+  if (!registryUrl) {
+    throw new Error("Paid fee mode (feeAmount > 0) requires MPC_CANTON_CC_REGISTRY_URL");
+  }
   const holdingEvents = await canton.getInterfaceContracts([party], HOLDING_INTERFACE_ID);
   const selection = selectInputHoldings(
     holdingInputsFromEvents(holdingEvents),
     collector.priceConfig.feeAmount,
   );
-  const factory = await getTransferFactoryForFee(env!.MPC_CANTON_CC_REGISTRY_URL, {
-    sender: party,
-    feeReceiver: collector.priceConfig.feeReceiver,
-    instrumentAdmin: collector.priceConfig.instrumentAdmin,
-    instrumentId: collector.priceConfig.instrumentId,
-    amount: collector.priceConfig.feeAmount,
-    inputHoldingCids: selection.inputHoldingCids,
-  });
+  const factory = await getTransferFactoryForFee(
+    registryUrl,
+    {
+      sender: party,
+      feeReceiver: collector.priceConfig.feeReceiver,
+      instrumentAdmin: collector.priceConfig.instrumentAdmin,
+      instrumentId: collector.priceConfig.instrumentId,
+      amount: collector.priceConfig.feeAmount,
+      inputHoldingCids: selection.inputHoldingCids,
+    },
+    {
+      // DevNet's CC registry is the validator scan-proxy, gated by the same OIDC
+      // bearer as the ledger; getTransferFactoryForFee sends none by default.
+      fetchImpl: async (input, init = {}) => {
+        const headers = new Headers(init.headers);
+        headers.set("Authorization", `Bearer ${await getAuthToken()}`);
+        return fetch(input, { ...init, headers });
+      },
+    },
+  );
   return {
     args: assembleFeeChoiceArgs(collector, factory, selection),
     disclosures: collectFeeDisclosures(collector, factory),
@@ -410,11 +459,13 @@ async function submitVaultRequest(
     userId,
     [party],
     VAULT_T,
-    env!.MPC_CANTON_VAULT_CONTRACT_ID,
+    vaultContractId,
     choice,
     {
       requester: party,
-      signerCid: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
+      // Use the resolved disclosure's cid so the choice matches the attached Signer
+      // (endpoint-sourced or config-sourced — same contract on a current deployment).
+      signerCid: signerDisclosure.contractId!,
       keyVersion: String(KEY_VERSION), // Daml `Int` is wire-encoded as a string over JSON API v2
       algo: ALGO,
       dest: DEST,
@@ -436,29 +487,26 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
   beforeAll(async () => {
     party = env!.MPC_CANTON_PARTY_ID;
     userId = env!.MPC_CANTON_LEDGER_API_USER;
-    canton = new CantonClient(env!.MPC_CANTON_JSON_API_URL, { getToken: makeTokenProvider(env!) });
+    getAuthToken = makeTokenProvider(env!);
+    canton = new CantonClient(env!.MPC_CANTON_JSON_API_URL, { getToken: getAuthToken });
 
     // Preflight: OIDC auth + ledger reachability.
     await canton.getLedgerEnd();
 
-    // The Signer disclosure is injected from config — its full envelope, exactly as a
-    // requester (who can't read the sigNetwork-only Signer in its own ACS) is handed it.
-    signerDisclosure = {
-      templateId: env!.MPC_CANTON_SIGNER_TEMPLATE_ID,
-      contractId: env!.MPC_CANTON_SIGNER_CONTRACT_ID,
-      createdEventBlob: env!.MPC_CANTON_SIGNER_CREATED_EVENT_BLOB,
-      synchronizerId: env!.MPC_CANTON_SIGNER_SYNCHRONIZER_ID,
-    };
-    // The Vault we disclose live (we're a stakeholder) — and read its args just below.
-    vaultDisclosure = await canton.getDisclosedContract(
-      [party],
-      VAULT_T,
-      env!.MPC_CANTON_VAULT_CONTRACT_ID,
+    // Signer + Vault disclosures come from the deployed disclosure-api endpoint — the way a
+    // real integrator obtains the sigNetwork-only contracts it can't read in its own ACS.
+    const api = await fetchEndpointDisclosures(env!.MPC_CANTON_DISCLOSURE_API_URL);
+    signerDisclosure = api.signer;
+    vaultDisclosure = api.vault;
+    vaultContractId = vaultDisclosure.contractId!;
+    console.log(
+      `[e2e] disclosures from ${env!.MPC_CANTON_DISCLOSURE_API_URL} ` +
+        `(signer ${signerDisclosure.contractId}, vault ${vaultContractId})`,
     );
 
-    // Read the Vault's args to drive key derivation (operators → predecessorId).
+    // Read the Vault's args live (we're a stakeholder on DevNet) to drive key derivation.
     const vaults = await canton.getActiveContracts([party], VAULT_T);
-    const vaultContract = vaults.find((c) => c.contractId === env!.MPC_CANTON_VAULT_CONTRACT_ID);
+    const vaultContract = vaults.find((c) => c.contractId === vaultContractId);
     if (!vaultContract) throw new Error("Configured Vault not visible to party");
     const vaultArgs = vaultContract.createArgument as Vault;
     operators = vaultArgs.operators;
@@ -538,7 +586,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
         userId,
         [party],
         VAULT_T,
-        env!.MPC_CANTON_VAULT_CONTRACT_ID,
+        vaultContractId,
         "ClaimDeposit",
         {
           requester: party,
@@ -622,7 +670,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
         userId,
         [party],
         VAULT_T,
-        env!.MPC_CANTON_VAULT_CONTRACT_ID,
+        vaultContractId,
         "CompleteWithdrawal",
         {
           requester: party,

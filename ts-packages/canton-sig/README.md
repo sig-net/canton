@@ -16,7 +16,7 @@ pnpm add canton-sig viem
 You will receive:
 
 1. The `Signer` and `Vault` contract IDs (the MPC operator hosts both).
-2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`.
+2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`. A requester is **not** a stakeholder of the `sigNetwork`-co-signed `Signer` (nor of the `sigNetworkFA`-signed fee contracts), so it cannot read them from its own ACS; it fetches the envelopes from the operator's disclosure endpoint. On DevNet that's a public, read-only `GET https://disclosure-api.vercel.app` returning `{ signer, vault, fee }` (served by `apps/disclosure-api` in this repo). Use its `signer` and `vault`; the `fee` blobs are a DevNet snapshot, and because `FeePriceConfig` reprices, production must resolve the fee context **live** as the fee admin (`getFeeCollectorContext`, step 4 below).
 3. The MPC **root** secp256k1 public key (uncompressed, hex). Two children are derived from it via the Canton KDF (`ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`):
    - The **EVM child** for the deposit / sweep address (path = `${vaultId},${requester},${userPath}` for deposits, `${vaultId},root` for the sweep). Computed via `deriveDepositAddress`.
    - The **response-verification child** for outcome verification (KDF input `sender = operatorsHash`, constant `path = "canton response key"`, stored on `Vault.mpcResponseVerifyKey`). The Vault operator computes this when creating the Vault via `deriveResponseVerificationPublicKey` + `toSpkiPublicKey` — the integrator can recompute and assert equality before trusting the contract.
@@ -26,12 +26,23 @@ You will receive:
 ```typescript
 import {
   CantonClient,
-  Vault, PendingDeposit, SignatureRespondedEvent, RespondBidirectionalEvent,
-  deriveDepositAddress, reconstructSignedTx, submitRawTransaction,
-  toCantonHex, findCreated, type DisclosedContract,
+  Vault,
+  PendingDeposit,
+  SignatureRespondedEvent,
+  RespondBidirectionalEvent,
+  deriveDepositAddress,
+  reconstructSignedTx,
+  submitRawTransaction,
+  toCantonHex,
+  findCreated,
+  type DisclosedContract,
   // CC signature fee
-  getFeeCollectorContext, getTransferFactoryForFee, selectInputHoldings,
-  holdingInputsFromEvents, assembleFeeChoiceArgs, collectFeeDisclosures,
+  getFeeCollectorContext,
+  getTransferFactoryForFee,
+  selectInputHoldings,
+  holdingInputsFromEvents,
+  assembleFeeChoiceArgs,
+  collectFeeDisclosures,
   HOLDING_INTERFACE_ID,
 } from "canton-sig";
 import { encodeAbiParameters, parseAbiParameters, keccak256, toHex } from "viem";
@@ -40,15 +51,18 @@ import { DER } from "@noble/curves/abstract/weierstrass.js";
 const canton = new CantonClient("http://localhost:7575");
 
 // 1. Inputs you receive at integration time
-const signerCid: string = "...";
-const vaultCid:  string = "...";
-const signerDisclosure: DisclosedContract = /* envelope */;
-const vaultDisclosure:  DisclosedContract = /* envelope */;
-const sigNetworkFA: string = "...";  // featured-app party — the fee admin (Signer.sigNetworkFA)
+// Fetch the Signer + Vault disclosures from the operator's disclosure endpoint — you
+// can't read the sigNetwork-only Signer from your own ACS (DevNet endpoint shown).
+const { signer: signerDisclosure, vault: vaultDisclosure } = (await (
+  await fetch("https://disclosure-api.vercel.app")
+).json()) as { signer: DisclosedContract; vault: DisclosedContract };
+const signerCid = signerDisclosure.contractId!;
+const vaultCid = vaultDisclosure.contractId!;
+const sigNetworkFA: string = "..."; // featured-app party — the fee admin (Signer.sigNetworkFA)
 const ccRegistryUrl = "https://..."; // CC token-standard registry base
 const MPC_ROOT_PUBLIC_KEY = "04..."; // uncompressed secp256k1, no 0x
-const VAULT_ID  = "my-vault";        // matches Vault.vaultId
-const operator: string  = "...";     // operator party from Vault.operators
+const VAULT_ID = "my-vault"; // matches Vault.vaultId
+const operator: string = "..."; // operator party from Vault.operators
 const requester = await canton.allocateParty("MyRequester");
 await canton.createUser("my-user", requester);
 
@@ -56,30 +70,34 @@ await canton.createUser("my-user", requester);
 //    Daml mirror: sort, keccak each utf-8 party id, keccak the concat.
 const operatorsHash = (() => {
   const sorted = [operator].slice().sort();
-  const each   = sorted.map((op) => keccak256(toHex(op)).slice(2));
+  const each = sorted.map((op) => keccak256(toHex(op)).slice(2));
   return keccak256(`0x${each.join("")}`).slice(2);
 })();
-const subpath = requester;                  // arbitrary; must be unique per user
+const subpath = requester; // arbitrary; must be unique per user
 const depositAddress = deriveDepositAddress(
-  MPC_ROOT_PUBLIC_KEY, operatorsHash, `${VAULT_ID},${requester},${subpath}`,
+  MPC_ROOT_PUBLIC_KEY,
+  operatorsHash,
+  `${VAULT_ID},${requester},${subpath}`,
 );
 // → fund this address with the ERC-20 you want to deposit
 
 // 3. Build the sweep tx (transfer(address,uint256) → vault sweep address).
 //    nonce / gas / fees come from your destination-chain RPC.
 const evmTxParams = {
-  to:                   "<erc20 contract, lowercase, no 0x>",
-  calldata:             "a9059cbb" + encodeAbiParameters(
-                          parseAbiParameters("address, uint256"),
-                          [`0x${vaultEvmAddress}`, amount],
-                        ).slice(2),
-  accessList:           [],
-  value:                toCantonHex(0n,        32),
-  nonce:                toCantonHex(nonce,     32),
-  gasLimit:             toCantonHex(100_000n,  32),
-  maxFeePerGas:         toCantonHex(maxFee,    32),
-  maxPriorityFeePerGas: toCantonHex(maxPrio,   32),
-  chainId:              toCantonHex(11155111n, 32),
+  to: "<erc20 contract, lowercase, no 0x>",
+  calldata:
+    "a9059cbb" +
+    encodeAbiParameters(parseAbiParameters("address, uint256"), [
+      `0x${vaultEvmAddress}`,
+      amount,
+    ]).slice(2),
+  accessList: [],
+  value: toCantonHex(0n, 32),
+  nonce: toCantonHex(nonce, 32),
+  gasLimit: toCantonHex(100_000n, 32),
+  maxFeePerGas: toCantonHex(maxFee, 32),
+  maxPriorityFeePerGas: toCantonHex(maxPrio, 32),
+  chainId: toCantonHex(11155111n, 32),
 };
 
 // 4. Assemble the CC signature-fee inputs (charged atomically inside RequestSignature).
@@ -103,12 +121,22 @@ const feeDisclosures = collectFeeDisclosures(collector, factory);
 
 // 5. Exercise RequestDeposit. NOTE: pass disclosedContracts as the last arg.
 const depositTx = await canton.exerciseChoice(
-  "my-user", [requester], Vault.templateId, vaultCid, "RequestDeposit",
+  "my-user",
+  [requester],
+  Vault.templateId,
+  vaultCid,
+  "RequestDeposit",
   {
-    requester, signerCid, path: subpath, evmTxParams,
-    keyVersion: 1, algo: "", dest: "", params: "",
+    requester,
+    signerCid,
+    path: subpath,
+    evmTxParams,
+    keyVersion: 1,
+    algo: "",
+    dest: "",
+    params: "",
     outputDeserializationSchema: '[{"name":"","type":"bool"}]',
-    respondSerializationSchema:  '[{"name":"","type":"bool"}]',
+    respondSerializationSchema: '[{"name":"","type":"bool"}]',
     ...feeArgs, // feeRegistrationCid, feeInputs, feeExtraArgs
   },
   undefined,
@@ -134,12 +162,16 @@ await submitRawTransaction(SEPOLIA_RPC_URL, signedTx);
 // 7. Wait for RespondBidirectionalEvent, then claim.
 const outcome = await pollForContract(RespondBidirectionalEvent.templateId, requestId);
 const claimTx = await canton.exerciseChoice(
-  "my-user", [requester], Vault.templateId, vaultCid, "ClaimDeposit",
+  "my-user",
+  [requester],
+  Vault.templateId,
+  vaultCid,
+  "ClaimDeposit",
   {
     requester,
-    pendingDepositCid:            pending.contractId,
+    pendingDepositCid: pending.contractId,
     respondBidirectionalEventCid: outcome.contractId,
-    signatureRespondedEventCid:   sigEvent.contractId,
+    signatureRespondedEventCid: sigEvent.contractId,
   },
   undefined,
   [vaultDisclosure],

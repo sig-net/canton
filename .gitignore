@@ -13,9 +13,12 @@ ts-packages/canton-sig/generated/
 
 # Secrets
 **/.env
+**/.env.mainnet
 
 # OS
 .DS_Store
 
 # npm
 *.tgz
+**/.env.bak
+**/.env.local
