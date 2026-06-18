@@ -1,4 +1,4 @@
-# Canton MPC PoC
+# Canton MPC
 
 ## Testing
 

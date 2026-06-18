@@ -106,7 +106,7 @@ struct ExactInputSingleParams {
 | arg slot 2      | fee = `0bb8` (3000), left-padded 32 bytes                                      |
 | arg slot 3      | recipient = vault address, left-padded 32 bytes                                |
 | arg slot 4      | amountIn, left-padded 32 bytes                                                 |
-| arg slot 5      | amountOutMinimum = `00..00` (0 for PoC; set real value in prod)                |
+| arg slot 5      | amountOutMinimum = `00..00` (0 initially; set real value in prod)              |
 | arg slot 6      | sqrtPriceLimitX96 = `00..00` (0 = no limit)                                    |
 | `value`         | `00..00` (32 bytes zero — not sending ETH)                                     |
 
@@ -239,7 +239,7 @@ nonconsuming choice ClaimUniswapSwap
 ### Validation Notes
 
 **Slippage protection:** `amountOutMinimum` is passed in calldata arg slot 5. For
-the PoC, set to `0` (accept any output). In production, the user should compute this
+now, set to `0` (accept any output). In production, the user should compute this
 off-chain using QuoterV2 and set a meaningful minimum.
 
 **tokenOut validation:** The Daml contract validates `tokenIn` matches the holding's
