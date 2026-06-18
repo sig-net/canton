@@ -1,4 +1,4 @@
-# Canton MPC PoC
+# Canton MPC
 
 MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (deposits, withdrawals, holdings); an MPC cluster signs EVM transactions using threshold-derived keys (compatible with [signet.js](https://github.com/sig-net/signet.js)); the Canton ledger verifies every MPC signature on-chain via `secp256k1WithEcdsaOnly` before crediting or debiting holdings. The `ts-packages/canton-sig` library is the TypeScript **client** for this protocol.
 

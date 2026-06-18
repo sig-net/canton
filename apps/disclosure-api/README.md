@@ -42,7 +42,7 @@ vercel link
 
 # 1. after a contract (re)deploy, regenerate the data module
 #    (writes apps/disclosure-api/disclosures.devnet.ts)
-DEPLOY_CONFIRM=1 pnpm --filter canton-mpc-poc-test exec tsx src/scripts/deploy-devnet.ts
+DEPLOY_CONFIRM=1 pnpm --filter canton-mpc-test exec tsx src/scripts/deploy-devnet.ts
 
 # 2. build locally (compiles disclosures.devnet.ts in) and deploy the prebuilt output
 pnpm run deploy:prod   # = vercel build --prod && vercel deploy --prebuilt --prod

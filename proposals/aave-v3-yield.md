@@ -754,11 +754,11 @@ lingering approval sits on-chain.
 |                                                | Still needs Canton tracking for auditability — ends up adding Option 1 anyway |
 
 **Good future optimization** for supported tokens, but not the primary
-mechanism for the PoC.
+mechanism for the initial implementation.
 
 ### Recommendation
 
-**Option 1** for the PoC. The MPC architecture already neutralizes direct
+**Option 1** to start. The MPC architecture already neutralizes direct
 exploit paths, so the main value of tracking is **auditability and policy
 enforcement** — both hard requirements for institutional custody. Option 3
 can be layered on later as an optimization for EIP-2612 tokens.
@@ -980,5 +980,5 @@ For defense-in-depth, the vault address can be a **Safe (Gnosis Safe)**
 instead of an EOA. The Safe's Guard would reject any `approve()` call at
 the EVM level — even if Canton or MPC is compromised, the on-chain contract
 blocks unauthorized approvals. This is what Fireblocks and Fordefi do
-under the hood. For the PoC, the EOA vault with Canton-only enforcement
+under the hood. For the initial implementation, the EOA vault with Canton-only enforcement
 is sufficient.
