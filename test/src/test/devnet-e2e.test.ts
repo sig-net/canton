@@ -93,9 +93,11 @@ const DEST = "ethereum";
 
 const POLL_INTERVAL_MS = 5_000;
 const SIGN_TIMEOUT_MS = 180_000; // wait for the MPC to threshold-sign
-// The outcome leg waits for on-chain *finality*, which can exceed 15 min — bump
-// MPC_CANTON_RESPOND_TIMEOUT_MS (the spec budget below tracks it) accordingly.
-const RESPOND_TIMEOUT_MS = Number(process.env.MPC_CANTON_RESPOND_TIMEOUT_MS ?? 300_000);
+// The outcome leg waits for on-chain *finality* plus the MPC's indexer/respond tail —
+// measured ~15-40 min depending on cluster load. Default to 20 min so an unparameterised
+// run clears a typical (~18 min) respond; raise MPC_CANTON_RESPOND_TIMEOUT_MS for the
+// throttled worst case (~40 min seen). The spec budget below tracks this value.
+const RESPOND_TIMEOUT_MS = Number(process.env.MPC_CANTON_RESPOND_TIMEOUT_MS ?? 1_200_000); // 20 min
 // Prime the MPC's outcome-watcher before the tx lands (guards a broadcast-before-watch race).
 const BROADCAST_DELAY_MS = Number(process.env.MPC_CANTON_BROADCAST_DELAY_MS ?? 20_000);
 // Per-spec vitest budget must outlast sign + broadcast delay + the finality-gated respond wait
