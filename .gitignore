@@ -14,11 +14,14 @@ ts-packages/canton-sig/generated/
 # Secrets
 **/.env
 **/.env.mainnet
+**/.env.testnet
 
 # OS
 .DS_Store
 
 # npm
 *.tgz
-**/.env.bak
+
+# Secret backups (deploy writes .env.<network>.bak) + local overrides
+**/.env*.bak
 **/.env.local

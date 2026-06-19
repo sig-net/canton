@@ -41,6 +41,15 @@ For a local loop (an MPC node against a local sandbox), see `TEST_LOCALLY.md` (R
 - `ts-packages/` -- TypeScript client packages (`canton-sig`)
 - `test/` -- DevNet e2e + co-located unit tests
 
+## Deploying the MPC stack
+
+`test/src/scripts/deploy.ts` deploys the Signer + CC fee infra + Vault to a Canton network, idempotently (reuses an existing Signer / collector / registration / price config / vault). Network-aware via `CANTON_NETWORK` (default `devnet`): it reads inputs from that network's env and writes the resulting ids + `apps/disclosure-api/disclosures.<network>.ts`. Free mode (`feeAmount 0`, no CC rails) by default; `MPC_CANTON_FEE_AMOUNT>0` for paid.
+
+- DevNet: `DEPLOY_CONFIRM=1 pnpm exec tsx src/scripts/deploy.ts` (reads/writes `test/.env`).
+- Testnet: `CANTON_NETWORK=testnet DOTENV_CONFIG_PATH=.env.testnet DEPLOY_CONFIRM=1 pnpm exec tsx src/scripts/deploy.ts` (reads/writes `test/.env.testnet`).
+
+The per-network MPC root key comes from signet.js `ROOT_PUBLIC_KEYS` (`TESTNET_DEV` → devnet, `TESTNET` → testnet) and is baked into the Vault's derived addresses, so it must match the cluster that will watch the contracts. DevNet and testnet are both deployed. `apps/disclosure-api` serves the disclosures split per network (`/api/devnet`, `/api/testnet`; `/` aliases devnet). `deploy-vault.ts` is a separate vault-only deploy.
+
 ## Canton node / network config (sig-net org)
 
 The Canton node this repo targets is provisioned in **other sig-net repos**, not here. Query them with `gh` when you need network config — the Splice version, participant/validator settings, or auth:
