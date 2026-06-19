@@ -64,7 +64,7 @@ import Splice.Api.Token.MetadataV1 (ExtraArgs)
 
 You'll be given two things to integrate against.
 
-**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `RequestSignature`). It carries no secrets — treat it as config. You can't read the `sigNetwork`-co-signed `Signer` from your own ACS, so obtain its envelope from the operator's disclosure endpoint. On DevNet that's `apps/disclosure-api`, served live at `https://disclosure-api.vercel.app`: `await fetch("https://disclosure-api.vercel.app")` returns the disclosures as `{ network, signer, vault, fee }`, where the `signer` field is the `Signer` envelope below (illustrative values — fetch the live one rather than hard-coding it):
+**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `RequestSignature`). It carries no secrets — treat it as config. You can't read the `sigNetwork`-co-signed `Signer` from your own ACS, so obtain its envelope from the operator's disclosure endpoint. That endpoint is `apps/disclosure-api`, served live per network: DevNet at `https://disclosure-api.vercel.app` (alias of `/api/devnet`), testnet at `https://disclosure-api.vercel.app/api/testnet`. `await fetch(<network endpoint>)` returns the disclosures as `{ network, signer, vault, fee }`, where the `signer` field is the `Signer` envelope below (illustrative values — fetch the live one rather than hard-coding it):
 
 ```json
 {

@@ -12,6 +12,7 @@ MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (dep
 | **Building a TypeScript client / 3rd-party integration**         | [`ts-packages/canton-sig/README.md`](ts-packages/canton-sig/README.md) — `CantonClient` + crypto + EVM tx helpers                                              |
 | **Reproducing `requestId` cross-language**                       | [`daml-packages/signet-eip712/README.md`](daml-packages/signet-eip712/README.md) — primitive encoders + composition rule                                       |
 | **Decoding ABI return data on-ledger**                           | [`daml-packages/signet-abi/README.md`](daml-packages/signet-abi/README.md) — slot vs byte-offset addressing                                                    |
+| **Deploying the Signer + fee + Vault to a network**              | [`test/src/scripts/deploy.ts`](test/src/scripts/deploy.ts) — network-aware (`CANTON_NETWORK`, default `devnet`); DevNet + testnet are live                     |
 | **Running a full multi-participant Canton stack**                | [`SETUP.md`](SETUP.md) — local CN Quickstart (Keycloak, Splice, observability)                                                                                 |
 | **Testing deposit/withdraw end-to-end**                          | [`test/src/test/devnet-e2e.test.ts`](test/src/test/devnet-e2e.test.ts) against DevNet, or [`TEST_LOCALLY.md`](TEST_LOCALLY.md) for a local sandbox + MPC       |
 
