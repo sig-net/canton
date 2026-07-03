@@ -72,7 +72,7 @@ The deposit flow mirrors the usual centralized-exchange pattern: a user funds a 
 4. `RequestDeposit` validates calldata, exercises `Signer.RequestSignature`, fetches the resulting `SignBidirectionalEvent`, computes `requestId`, and creates `PendingDeposit` with both `requestId` and `signEventCid`.
 5. The MPC service observes `SignBidirectionalEvent`, signs the request-specific digest with the child key for the request path, and creates `SignatureRespondedEvent`.
 6. The client reads `SignatureRespondedEvent`, reconstructs the signed EIP-1559 transaction, and submits it to the destination chain.
-7. After the receipt is observable, the MPC service publishes `RespondBidirectionalEvent` with `serializedOutput` and a response signature made by the response-verification child key.
+7. After the receipt is finalized, the MPC service publishes `RespondBidirectionalEvent` with `serializedOutput` and a response signature made by the response-verification child key.
 8. The user exercises `Vault.ClaimDeposit`. The choice archives `PendingDeposit`, cross-checks both MPC evidence contracts, verifies `RespondBidirectionalEvent.signature` against `mpcResponseVerifyKey`, rejects failures or `bool(false)`, consumes both evidence contracts, retires the original `SignBidirectionalEvent` via `Consume_SignBidirectional`, and creates `Erc20Holding`.
 
 ```text
@@ -104,7 +104,7 @@ The deposit flow mirrors the usual centralized-exchange pattern: a user funds a 
 |                               |                               |                               |                               | sweep funds to vault address  |
 |------------------------------------------------------------------------------------------------------------------------------>|                               |
 |                               |                               |                               |                               |                               |
-|                               |                               |                               | 6. poll receipt               | receipt observable            |
+|                               |                               |                               | 6. poll receipt               | receipt finalized             |
 |                               |                               |                               | re-simulate call              |                               |
 |                               |                               |                               |                               |                               |
 |                               |                               | RespondBidirectional          | 7. create                     |                               |
@@ -165,7 +165,7 @@ The withdrawal flow spends a user's Canton holding by signing an ERC-20 transfer
 |                               |                               |                               |                               | transfer funds to recipient   |
 |------------------------------------------------------------------------------------------------------------------------------>|                               |
 |                               |                               |                               |                               |                               |
-|                               |                               |                               | 5. poll receipt               | receipt observable            |
+|                               |                               |                               | 5. poll receipt               | receipt finalized             |
 |                               |                               |                               | re-simulate call              |                               |
 |                               |                               |                               |                               |                               |
 |                               |                               | RespondBidirectional          | 6. create                     |                               |
@@ -191,11 +191,11 @@ The withdrawal flow spends a user's Canton holding by signing an ERC-20 transfer
 
 `RespondBidirectionalEvent.serializedOutput` is interpreted by the vault claim choices:
 
-| Outcome                            | Encoding                                                                          | Vault behavior                                  |
-| ---------------------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------- |
-| ERC-20 call succeeded              | ABI-encoded return data, expected to decode as `bool(true)` for `transfer`        | `ClaimDeposit` mints; `CompleteWithdrawal` ends |
-| ERC-20 call returned `bool(false)` | ABI-encoded `bool(false)`                                                         | deposit rejects; withdrawal refunds             |
-| EVM tx reverted/replaced/failed    | `deadbeef` prefix followed by an ABI-encoded payload reserved for failure details | deposit rejects; withdrawal refunds             |
+| Outcome                            | Encoding                                                                                                                     | Vault behavior                                  |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| ERC-20 call succeeded              | ABI-encoded return data, expected to decode as `bool(true)` for `transfer`                                                   | `ClaimDeposit` mints; `CompleteWithdrawal` ends |
+| ERC-20 call returned `bool(false)` | ABI-encoded `bool(false)`                                                                                                    | deposit rejects; withdrawal refunds             |
+| EVM tx reverted/replaced/failed    | `deadbeef` prefix followed by a fixed ABI-encoded placeholder — only the prefix is meaningful, no error details are embedded | deposit rejects; withdrawal refunds             |
 
 The response signature is over `keccak256(requestId ‖ serializedOutput)`. The request signature in `SignatureRespondedEvent` is not treated as proof of execution; deposit minting and withdrawal settlement/refund happen only after the vault verifies the signed response outcome. `RequestWithdrawal` archives the holding earlier as optimistic debit.
 
