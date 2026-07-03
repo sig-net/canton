@@ -30,8 +30,9 @@ transaction**. If the fee cannot settle, `RequestSignature` aborts and no event 
 ## Fee endpoint contract
 
 `POST /fee/v1/collector` (`FEE_COLLECTOR_ENDPOINT_PATH` in `canton-sig`), no request body. The FA
-operates it with fee-admin read authority; the response is the JSON serialization of the
-`FeeCollectorContext` that `canton-sig`'s `getFeeCollectorContext` builds:
+operates it with fee-admin read authority (this is the target endpoint contract — today
+`apps/disclosure-api` serves a static fee snapshot instead); the response is the JSON serialization of
+the `FeeCollectorContext` that `canton-sig`'s `getFeeCollectorContext` builds:
 
 ```jsonc
 {
@@ -86,17 +87,22 @@ Upgradability rules:
   alongside v1, never as an upgrade.
 - **Upgrade checking is off until a v-next exists — by construction, not oversight.**
   `signet-fee-amulet` / `signet-api-fee-v1` are new package names (no prior version to diff
-  against); `signet-signer-v1` / `signet-vault-v1` keep main's name **and** `0.0.1` but change it
-  incompatibly (added `sigNetworkFA` signatory, renamed choices), so main's DAR is not a valid
-  `upgrades:` target — SCU rejects a same-version redefinition and the diff is breaking by design.
+  against); `signet-signer-v1` / `signet-vault-v1` kept the pre-fee package name **and** `0.0.1`
+  while changing incompatibly (added `sigNetworkFA` signatory, renamed choices), so the pre-fee
+  DAR is not a valid `upgrades:` target — SCU rejects a same-version redefinition and that diff is
+  breaking by design.
   There is nothing for `typecheck-upgrades:` to validate until the first change _after_ this
   baseline ships. Turn it on then:
   1. **At baseline freeze**, archive the exact deployed DARs (`dpm build --all` output) as the
-     reference — commit under `baseline-dars/` or pin to the deploy tag.
-  2. **On the first change**, bump that package's `version` and add to its `daml.yaml`:
-     `typecheck-upgrades: yes` and `upgrades: <baseline-dars>/<pkg>-0.0.1.dar`. Only the package
-     that changed; `signet-api-fee-v1` stays frozen forever (breaking changes ship as `-v2`).
-  3. **CI gate:** `dpm upgrade-check --both <baseline>.dar <new>.dar` per evolving package.
+     reference — commit each under its package's `prior/` directory (see `prior/README.md`) or pin
+     to the deploy tag.
+  2. **On the first change**, bump that package's `version` and uncomment the
+     `upgrades: ./prior/<pkg>-0.0.1.dar` line in its `daml.yaml` (`typecheck-upgrades: yes` is
+     already set). Only the package that changed; `signet-api-fee-v1` stays frozen forever
+     (breaking changes ship as `-v2`).
+  3. **CI gate:** already wired — `scripts/scu-upgrade-check.sh` runs
+     `dpm upgrade-check --both <baseline>.dar <new>.dar` against every baseline in `prior/`
+     (and skips a package while its `prior/` is empty).
 
 ## Fee admin runbook (`sigNetworkFA`, off-ledger)
 
@@ -116,8 +122,8 @@ Upgradability rules:
   logic must die. Gate both acts (vetting a fee impl, signing a registration) like production
   deploy approvals.
 - **Economics:** keeping `feeReceiver = sigNetworkFA` (also the preapproval provider) captures the
-  featured-app reward on each incoming fee transfer (~$1 activity markers until CIP-0104
-  Increment 4 cuts over; traffic-based afterwards).
+  featured-app reward on each incoming fee transfer (a ~$1 `AppRewardCoupon` per featured transfer
+  until CIP-0104 Increment 4 cuts over; traffic-based afterwards).
 
 ## Factory-cid pinning — decided hardening (not yet implemented)
 
@@ -136,9 +142,10 @@ factory that returns `Completed` without moving funds. Once the factory cid come
 config the requester can't substitute one — the genuine factory runs. It still consumes the
 `OpenMiningRound` / `AmuletRules` / `TransferPreapproval` the requester relays through the context, but
 those are DSO-signed (a `createdEventBlob` is bound to its cid — unforgeable) and the genuine impl
-validates them, so the only outcomes are a real transfer or an abort. The transfer's `sender` /
-`receiver` / `amount` / `expectedAdmin` are already set by the charge from the FA-signed price config,
-never from the context, so a relayed context can only enable settlement, not redirect it.
+validates them, so the only outcomes are a real transfer or an abort. The transfer's `sender` is set by
+the charge from its `payer` argument (the requester) and its `receiver` / `amount` / `expectedAdmin`
+from the FA-signed price config — never from the context — so a relayed context can only enable
+settlement, not redirect it.
 
 **Why it holds structurally, not just by validation.** Forcing the genuine `ExternalPartyAmuletRules`
 also flips _who confirms_ the settlement: that factory and the holdings it moves are DSO-signed, so the
@@ -169,9 +176,10 @@ later flip to a paid fee valid mid-window). On the rare
 `ExternalPartyAmuletRules` rotation, trigger an immediate re-pin (watch for its archival) so the
 fail-closed gap is seconds rather than up to one reprice interval.
 
-**Scope (baseline change, frozen API untouched).** Confined to `signet-fee-amulet`. Nothing is deployed
-yet — this package has no prior version to upgrade from (see _Upgradability rules_: upgrade checking is
-off until a v-next exists), so this is a **baseline** definition, not an SCU. Add
+**Scope (baseline change, frozen API untouched).** Confined to `signet-fee-amulet`. This package has no
+prior _released_ version to upgrade from (see _Upgradability rules_: upgrade checking is off until a
+v-next exists), so this is a **baseline** definition, not an SCU; networks that already vetted `0.0.1`
+(DevNet/TestNet) pick it up via redeploy. Add
 `transferFactoryCid : ContractId TransferFactory` to `FeePriceConfig` as a **mandatory** field (not
 `Optional`): mandatory forces every bootstrap and every `UpdateFee` reprice to set it, so the type
 system guarantees a config can never be posted without a pinned factory — there is no `None` branch that

@@ -6,11 +6,11 @@ Tested on macOS Sequoia 15.4 (Apple Silicon M3 Max, 128 GB RAM).
 
 ## Prerequisites
 
-| Tool           | Version                             | Purpose                                                  |
-| -------------- | ----------------------------------- | -------------------------------------------------------- |
-| Docker Desktop | >= 27.0, **8 GB+ memory allocated** | Runs all Canton services as containers                   |
-| Nix            | >= 2.33                             | Reproducible dev toolchain (JDK, Node, Gradle, Daml SDK) |
-| direnv         | >= 2.37                             | Auto-activates Nix shell when you `cd` into the project  |
+| Tool           | Version                                  | Purpose                                                 |
+| -------------- | ---------------------------------------- | ------------------------------------------------------- |
+| Docker Desktop | Engine >= 27, **8 GB+ memory allocated** | Runs all Canton services as containers                  |
+| Nix            | >= 2.33                                  | Reproducible dev toolchain (JDK, Node, Daml SDK)        |
+| direnv         | >= 2.37                                  | Auto-activates Nix shell when you `cd` into the project |
 
 ### 1. Docker Desktop
 
@@ -95,7 +95,7 @@ cd cn-quickstart
 direnv allow
 ```
 
-The first `direnv allow` downloads the full Nix dev shell (JDK 21, Node 20/22, Gradle, Daml SDK, gcloud SDK, TypeScript, yq, etc.). Takes a few minutes the first time — subsequent activations are instant.
+The first `direnv allow` downloads the full Nix dev shell (JDK, Node, the Daml SDK toolchain, etc.). Takes a few minutes the first time — subsequent activations are instant.
 
 ### 2. Configure the environment
 
@@ -122,7 +122,7 @@ TEST_MODE=off
 EOF
 ```
 
-**PARTY_HINT format:** Must match `<organization>-<function>-<integer>` where organization and function are alphanumeric and enumerator is an integer. Examples: `signet-mpc-1`, `myorg-dev-1`. Invalid examples: `signet-canton-mpc` (three segments without integer), `my_org-dev-1` (underscores). Splice will crash in a restart loop with `INVALID_ARGUMENT` if the format is wrong.
+**PARTY_HINT format:** Must match `<organization>-<function>-<integer>` where organization and function are letters-only and the enumerator is an integer. Examples: `signet-mpc-1`, `myorg-dev-1`. Invalid examples: `signet-canton-mpc` (three segments without integer), `my_org-dev-1` (underscores). Splice will crash in a restart loop with `INVALID_ARGUMENT` if the format is wrong.
 
 ### 3. Build
 

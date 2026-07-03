@@ -42,7 +42,7 @@ Each route serves `disclosures.<network>.ts` in this package — a generated mod
 The repo is a pnpm workspace whose install resolves codegen-only packages (`canton-sig`'s `@daml.js/*` `file:` deps) that don't exist in a fresh CI checkout, so a Vercel git build fails at `pnpm install`. We therefore **build locally and deploy the prebuilt output**:
 
 ```bash
-# 0. one-time: link the Vercel project (Root Directory = apps/disclosure-api)
+# 0. one-time: link the Vercel project (run from apps/disclosure-api)
 vercel link
 
 # 1. after a contract (re)deploy, regenerate that network's data module

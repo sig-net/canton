@@ -1,6 +1,6 @@
 # Canton MPC
 
-MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (deposits, withdrawals, holdings); an MPC cluster signs EVM transactions using threshold-derived keys (compatible with [signet.js](https://github.com/sig-net/signet.js)); the Canton ledger verifies every MPC signature on-chain via `secp256k1WithEcdsaOnly` before crediting or debiting holdings. The `ts-packages/canton-sig` library is the TypeScript **client** for this protocol.
+MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (deposits, withdrawals, holdings); an MPC cluster signs EVM transactions using threshold-derived keys (compatible with [signet.js](https://github.com/sig-net/signet.js)); the Canton ledger verifies the MPC's signed outcome on-chain via `secp256k1WithEcdsaOnly` before crediting holdings or finalizing withdrawals. The `ts-packages/canton-sig` library is the TypeScript **client** for this protocol.
 
 ## Where to start
 
@@ -63,7 +63,7 @@ dpm build --all
 pnpm run daml:test
 ```
 
-> `dpm test` does not support `--all` — the `daml:test` script (package.json, also used by CI) tests each package individually.
+> `dpm test` has no multi-package mode (its `--all` flag only adds a package's dependencies) — the `daml:test` script (package.json, also used by CI) tests each package individually.
 
 ## TypeScript Package Tests
 
@@ -86,7 +86,7 @@ cd test
 cp .env.example .env
 ```
 
-Fill in the `MPC_CANTON_*` values (DevNet JSON API URL, OIDC credentials, party id, the Signer + Vault contract/template ids, the MPC root public key, the CC registry URL for the signature fee), plus `MPC_CANTON_ETH_RPC_URL` (the DevNet EVM node) and `FAUCET_PRIVATE_KEY` (funds the derived deposit/vault addresses). See `test/.env.example` for the full list.
+Fill in the `MPC_CANTON_*` values (DevNet JSON API URL, OIDC credentials, party id, the disclosure endpoint URL — the e2e fetches the Signer + Vault from it — the MPC root public key, and, for paid fee mode, the CC registry URL), plus `MPC_CANTON_ETH_RPC_URL` (the DevNet EVM node) and `FAUCET_PRIVATE_KEY` (funds the derived deposit/vault addresses). See `test/.env.example` for the full list.
 
 > The Vault hardcodes `caip2 = eip155:1` (test mode); the MPC accepts only that caip2. caip2 is decoupled from the EVM chainId, so the test signs with the **Sepolia chainId (11155111)** and broadcasts to `MPC_CANTON_ETH_RPC_URL`, which the MPC's `eip155:1` indexer watches. This split is a Sepolia-devnet workaround — on mainnet it's unnecessary, since the chain is genuinely `eip155:1`.
 

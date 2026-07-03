@@ -9,7 +9,7 @@ dpm build --all
 pnpm run daml:test
 ```
 
-> `dpm test` does not support `--all` — the `daml:test` script (package.json, also used by CI) tests each package individually.
+> `dpm test` has no multi-package mode (its `--all` flag only adds a package's dependencies) — the `daml:test` script (package.json, also used by CI) tests each package individually.
 
 ### TypeScript oracle suites (no ledger needed)
 
@@ -33,7 +33,7 @@ For a local loop (an MPC node against a local sandbox), see `TEST_LOCALLY.md` (R
 
 ### Regenerating bindings
 
-`pnpm codegen:daml` (from the repo root) after Daml changes. `pnpm codegen:api` needs a reachable Canton JSON API on `:7575` (e.g. the local sandbox from `TEST_LOCALLY.md`, or DevNet).
+`pnpm codegen:daml` (from the repo root) after Daml changes. `pnpm codegen:api` needs a reachable Canton JSON API on `localhost:7575` (e.g. the local sandbox from `TEST_LOCALLY.md`, or a port-forward to a hosted ledger).
 
 ## Project layout
 

@@ -120,9 +120,10 @@ DevNet** to run the exact same reward paths.
 > **preapproval provider + featured**, not on explicit beneficiary plumbing. Confirm on DevNet that a
 > preapproval-settled fee transfer actually produces an `AppRewardCoupon` for `sigNetworkFA`; if not,
 > add explicit attribution.
-> **Roadmap caveat:** `FEE.md` notes featured-app capture is "~$1 activity markers until **CIP-0104
-> Increment 4** cuts over; traffic-based afterwards." The official tokenomics docs don't yet describe
-> that cutover — track it via GSF, because it changes how (and how much) you earn.
+> **Roadmap caveat:** `FEE.md` notes featured-app capture is "a ~$1 `AppRewardCoupon` per featured
+> transfer until **CIP-0104 Increment 4** cuts over; traffic-based afterwards." The CIP-0104 spec
+> defines that increment rollout; track its MainNet rollout status via GSF, because it changes how
+> (and how much) you earn.
 
 **Keep good standing** with the Committee's fair-usage policy — the right can be revoked.
 

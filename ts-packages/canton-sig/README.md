@@ -6,17 +6,17 @@ Pairs with the [`signet-signer-v1`](../../daml-packages/signet-signer-v1/README.
 ## Install
 
 ```bash
-pnpm add canton-sig viem
+pnpm add canton-sig viem @noble/curves
 ```
 
-`viem` is a peer dependency.
+`viem` is a peer dependency; `@noble/curves` is needed only for the DER signature parsing shown in the quick start.
 
 ## Inputs at integration time
 
 You will receive:
 
 1. The `Signer` and `Vault` contract IDs (the MPC operator hosts both).
-2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`. A requester is **not** a stakeholder of the `sigNetwork`-co-signed `Signer` (nor of the `sigNetworkFA`-signed fee contracts), so it cannot read them from its own ACS; it fetches the envelopes from the operator's disclosure endpoint. That endpoint (`apps/disclosure-api`) is public, read-only, and split per network: DevNet `GET https://disclosure-api.vercel.app` (alias of `/api/devnet`), testnet `GET https://disclosure-api.vercel.app/api/testnet`, each returning `{ network, signer, vault, fee }`. Use its `signer` and `vault`; the `fee` blobs are a DevNet snapshot, and because `FeePriceConfig` reprices, production must resolve the fee context **live** as the fee admin (`getFeeCollectorContext`, step 4 below).
+2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`. A requester is **not** a stakeholder of the `sigNetwork`-co-signed `Signer` (nor of the `sigNetworkFA`-signed fee contracts), so it cannot read them from its own ACS; it fetches the envelopes from the operator's disclosure endpoint. That endpoint (`apps/disclosure-api`) is public, read-only, and split per network: DevNet `GET https://disclosure-api.vercel.app` (alias of `/api/devnet`), testnet `GET https://disclosure-api.vercel.app/api/testnet`, each returning `{ network, signer, vault, fee }`. Use its `signer` and `vault`; the `fee` blobs are a deploy-time snapshot of that network, and because `FeePriceConfig` reprices, production must resolve the fee context **live** as the fee admin (`getFeeCollectorContext`, step 4 below).
 3. The MPC **root** secp256k1 public key (uncompressed, hex). Two children are derived from it via the Canton KDF (`ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`):
    - The **EVM child** for the deposit / sweep address (path = `${vaultId},${requester},${userPath}` for deposits, `${vaultId},root` for the sweep). Computed via `deriveDepositAddress`.
    - The **response-verification child** for outcome verification (KDF input `sender = operatorsHash`, constant `path = "canton response key"`, stored on `Vault.mpcResponseVerifyKey`). The Vault operator computes this when creating the Vault via `deriveResponseVerificationPublicKey` + `toSpkiPublicKey` — the integrator can recompute and assert equality before trusting the contract.
@@ -132,8 +132,8 @@ const depositTx = await canton.exerciseChoice(
     path: subpath,
     evmTxParams,
     keyVersion: 1,
-    algo: "",
-    dest: "",
+    algo: "ECDSA",
+    dest: "ethereum",
     params: "",
     outputDeserializationSchema: '[{"name":"","type":"bool"}]',
     respondSerializationSchema: '[{"name":"","type":"bool"}]',
@@ -150,7 +150,7 @@ const { requestId } = pendingArgs;
 
 // 6. Wait for SignatureRespondedEvent, parse DER, broadcast.
 const sigEvent = await pollForContract(SignatureRespondedEvent.templateId, requestId);
-const { der, recoveryId } = sigEvent.signature.value;
+const { der, recoveryId } = (sigEvent.createArgument as SignatureRespondedEvent).signature.value;
 const { r, s } = DER.toSig(Uint8Array.from(Buffer.from(der, "hex")));
 const signedTx = reconstructSignedTx(evmTxParams, {
   r: `0x${r.toString(16).padStart(64, "0")}`,
@@ -179,7 +179,7 @@ const claimTx = await canton.exerciseChoice(
 const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 ```
 
-`pollForContract` is whatever you implement on top of `canton.getActiveContracts`. The full runnable version (party allocation, faucet funding, gas fetch, polling, withdrawal + refund) is `test/src/test/devnet-e2e.test.ts` in this repo and is the recommended starting point.
+`pollForContract` is whatever you implement on top of `canton.getActiveContracts`. The full runnable version (faucet funding, gas fetch, fee assembly, polling, withdrawal) is `test/src/test/devnet-e2e.test.ts` in this repo and is the recommended starting point; it runs as a pure client against a pre-provisioned party and the deployed Vault.
 
 ## Security caveats for integrators
 
@@ -203,7 +203,7 @@ Canton-format hex is bare lowercase hex, no `0x` prefix; `""` represents empty b
 - `caip2Id` — must equal whatever the Vault used, **not** necessarily the signed chainId. The test-mode Vault hardcodes `"eip155:1"` while signing for Sepolia (`11155111`) — a devnet workaround; on mainnet the chain is genuinely `eip155:1`, so `chainIdHexToCaip2(evmTxParams.chainId)` matches and no hardcode is needed. Use whichever the Vault uses, or the recomputed `requestId` won't match.
 - `keyVersion` — `KEY_VERSION` (`1`).
 - `path` — what you passed in. The Vault prefixes with `${vaultId},${requester},` for deposits and uses `${vaultId},root` internally for the sweep address.
-- `algo`, `dest`, `params` — always `""`.
+- `algo`, `dest`, `params` — opaque; hashed into `requestId` only. Pass the same values you used on the request (in-repo consumers use `"ECDSA"` / `"ethereum"` / `""`).
 
 The TS implementation matches `signet-signer-v1/daml/RequestId.daml` byte-for-byte.
 
@@ -211,7 +211,7 @@ The TS implementation matches `signet-signer-v1/daml/RequestId.daml` byte-for-by
 
 ### `CantonClient(baseUrl = "http://localhost:7575", options?: CantonClientOptions)`
 
-`uploadDar`, `allocateParty`, `createUser`, `createUserWithRights`, `grantUserRights`, `listUserRights`, `createContract`, `exerciseChoice`, `getActiveContracts`, `getInterfaceContracts`, `getDisclosedContract`, `getLedgerEnd`. All typed against the generated OpenAPI schema.
+`uploadDar`, `allocateParty`, `createUser`, `createUserWithRights`, `grantUserRights`, `listUserRights`, `createContract`, `exerciseChoice`, `getActiveContracts`, `getInterfaceContracts`, `getDisclosedContract`, `getLedgerEnd`. All typed against the generated OpenAPI schema, except `uploadDar`, which posts the raw DAR bytes via plain `fetch`.
 
 `options.getToken` — optional async bearer-token provider; when set, every request carries `Authorization: Bearer <token>`. A local `dpm sandbox` needs no auth; a hosted participant (e.g. DevNet) does.
 
@@ -253,7 +253,7 @@ Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 | `selectInputHoldings(holdings, feeAmount)`                                   | Greedy largest-first selection of unlocked holdings covering the fee (max `MAX_TRANSFER_INPUTS`)   |
 | `assembleFeeChoiceArgs(collector, factory, selection)`                       | → `{ feeRegistrationCid, feeInputs, feeExtraArgs }` for `RequestDeposit` / `RequestWithdrawal`     |
 | `collectFeeDisclosures(collector, factory)`                                  | All fee disclosures to attach to the exercise                                                      |
-| `parsePriceConfig(event)` / `isPriceConfigInWindow(cfg, now)`                | `FeePriceConfig` helpers                                                                           |
+| `parsePriceConfig(createArgument)` / `isPriceConfigInWindow(cfg, now)`       | `FeePriceConfig` helpers                                                                           |
 | `computeFeeCc(inputs)`                                                       | Prices the fee in CC (traffic cost + coverage + profit, scale `CC_DECIMALS`)                       |
 | `repriceWindow` / `findLatestPriceConfig` / `repriceOnce` / `runRepriceLoop` | Fee-admin reprice job (`pnpm --filter canton-sig reprice` → `scripts/reprice-fee.ts`)              |
 
