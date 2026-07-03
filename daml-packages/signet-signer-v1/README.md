@@ -2,6 +2,8 @@
 
 Generic MPC signing infrastructure for Canton. The Signer is a small set of Daml templates that lets a calling contract ask a trusted MPC service (the `sigNetwork` party) to produce signatures for transactions on a downstream chain (currently EVM; extensible to BTC, Solana, etc.). It is chain-agnostic and reusable across multiple consumer implementations.
 
+These templates are the Canton implementation of the standard Signet [Sign Bidirectional Flow](https://docs.sig.network/architecture/sign-bidirectional) — see that page for the chain-agnostic lifecycle (phases, serialization schemas, `0xdeadbeef` error prefix, key derivation, response-key model). This README documents only the Canton-specific API and integrator obligations.
+
 For a worked consumer example see [`signet-vault-v1`](../signet-vault-v1/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/devnet-e2e.test.ts` in this repo.
 
 ## How this fits together
