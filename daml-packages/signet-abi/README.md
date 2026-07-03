@@ -35,7 +35,7 @@ let name   = abiDecodeString hex offset -- byte offset → decoded value
 
 ### Static Type Decoders
 
-All take a slot index. Error on out-of-bounds.
+All take a slot index and error on out-of-bounds, except `isAbiAddressSlot` / `abiAddressSlotToAddress`, which take the 32-byte slot value itself.
 
 - `abiDecodeUint : BytesHex -> Int -> BytesHex` -- decode uint (any width) at slot i. Returns raw 32-byte hex.
 - `abiDecodeInt : BytesHex -> Int -> BytesHex` -- decode int (two's complement) at slot i. Returns raw 32-byte hex. Use `hexCompareInt` from `signet-uint256/HexCompare` for signed comparisons.
@@ -47,7 +47,7 @@ All take a slot index. Error on out-of-bounds.
 
 ### Dynamic Type Decoders
 
-These take byte offsets (except `abiReadOffset` which takes a slot index).
+These take byte offsets (except `abiReadOffset` which takes a slot index). Byte offsets must be non-negative multiples of 32; anything else errors.
 
 - `abiReadOffset : BytesHex -> Int -> Int` -- read offset pointer at **slot index** i. Returns a byte offset. Errors on overflow (>= 2^63).
 - `abiDecodeBytes : BytesHex -> Int -> BytesHex` -- decode dynamic bytes at byte offset. Errors if claimed length exceeds available data.
@@ -61,7 +61,7 @@ These take byte offsets (except `abiReadOffset` which takes a slot index).
 ### Error Handling
 
 - `abiHasErrorPrefix : BytesHex -> Bool` -- check for `deadbeef` error magic prefix. Returns False for short/empty input.
-- `abiStripErrorPrefix : BytesHex -> BytesHex` -- strip 4-byte error prefix. Errors if data < 4 bytes.
+- `abiStripErrorPrefix : BytesHex -> BytesHex` -- strip 4-byte error prefix. Errors if data < 4 bytes or the prefix is not the `deadbeef` magic.
 
 ### Constants
 
@@ -104,4 +104,4 @@ dpm build --all
 pnpm run daml:test
 ```
 
-Tests live in `signet-abi-tests`.
+Daml tests live in `signet-abi-tests`; a co-located viem oracle suite (`test/abi.test.ts`, run via `pnpm test`) cross-checks the same vectors.

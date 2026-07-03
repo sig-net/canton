@@ -51,7 +51,7 @@ keccak256 $
 
 ### Hex utilities
 
-- `padLeft : BytesHex -> Int -> BytesHex` — left-pad to the given byte width.
+- `padLeft : BytesHex -> Int -> BytesHex` — left-pad to the given byte width; over-long inputs are silently truncated to the rightmost bytes (so `eip712EncodeUint256` / `eip712EncodeAddress` truncate rather than reject).
 - `assertBytes32 : BytesHex -> BytesHex` — assert the value is exactly 32 bytes; aborts otherwise.
 - `ensureEvenHex : BytesHex -> BytesHex` — prepend `"0"` if the length is odd.
 - `hexToInt : BytesHex -> Int` — parse a hex string into an `Int`.

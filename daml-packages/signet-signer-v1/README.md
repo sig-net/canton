@@ -2,9 +2,9 @@
 
 Generic MPC signing infrastructure for Canton. The Signer is a small set of Daml templates that lets a calling contract ask a trusted MPC service (the `sigNetwork` party) to produce signatures for transactions on a downstream chain (currently EVM; extensible to BTC, Solana, etc.). It is chain-agnostic and reusable across multiple consumer implementations.
 
-These templates are the Canton implementation of the standard Signet [Sign Bidirectional Flow](https://docs.sig.network/architecture/sign-bidirectional) — see that page for the chain-agnostic lifecycle (phases, serialization schemas, `0xdeadbeef` error prefix, key derivation, response-key model). This README documents only the Canton-specific API and integrator obligations.
+These templates are the Canton implementation of the standard Signet [Sign Bidirectional Flow](https://docs.sig.network/architecture/sign-bidirectional) — see that page for the chain-agnostic lifecycle phases; it links onward to the detailed docs for the serialization schemas, `0xdeadbeef` error handling, key derivation, and response-key model. This README documents only the Canton-specific API and integrator obligations.
 
-For a worked consumer example see [`signet-vault-v1`](../signet-vault-v1/README.md). For an executable end-to-end run-through (party allocation, vault setup, deposit, claim, withdrawal) see `test/src/test/devnet-e2e.test.ts` in this repo.
+For a worked consumer example see [`signet-vault-v1`](../signet-vault-v1/README.md). For an executable end-to-end run-through of deposit, claim, and withdrawal (run as a pure client against a pre-provisioned party and the deployed Vault) see `test/src/test/devnet-e2e.test.ts` in this repo.
 
 ## How this fits together
 
@@ -48,6 +48,9 @@ build-options:
 Daml imports:
 
 ```daml
+import DA.Crypto.Text (secp256k1WithEcdsaOnly)
+import DA.List (sort)
+
 import Signer
   ( Signer, RequestSignature(..), SignBidirectionalEvent(..)
   , SignatureRespondedEvent(..), RespondBidirectionalEvent(..)
@@ -59,6 +62,7 @@ import Signer
 import EvmTypes (EvmType2TransactionParams(..), EvmAccessListEntry(..))
 import TxParams (TxParams(..))
 import RequestId (computeRequestId, computeResponseHash)
+import Eip712 (chainIdToDecimalText)
 import Signet.Api.Fee.V1 (FeeCollectorRegistration)
 import Splice.Api.Token.HoldingV1 (Holding)
 import Splice.Api.Token.MetadataV1 (ExtraArgs)
@@ -79,7 +83,7 @@ You'll be given two things to integrate against.
 
 `templateId` + `contractId` identify the on-ledger `Signer`; `createdEventBlob` is the authenticated create-event payload the ledger validates the disclosure against; `synchronizerId` is the Canton synchronizer (domain) it lives on.
 
-**2. The MPC root secp256k1 public key** (uncompressed, hex; per-network values published in signet.js as [`ROOT_PUBLIC_KEYS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L20)). Derive two children off-ledger with the Canton KDF — `ε = keccak256(prefix : chainId : predecessorId : path)`, child = `rootPub + ε·G`, with `predecessorId = sender = operatorsHash`. The prefix (`"sig.network v2.0.0 epsilon derivation"`) and `canton:global` chain id are authoritative in signet.js: [`deriveChildPublicKey`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/utils/cryptography.ts#L90-L122), [`KDF_CHAIN_IDS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L35-L39):
+**2. The MPC root secp256k1 public key** (uncompressed hex; the per-network values published in signet.js as [`ROOT_PUBLIC_KEYS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L20) are NAJ-encoded (`secp256k1:…`) — convert with signet.js's `normalizeToUncompressedPubKey`). Derive two children off-ledger with the Canton KDF — `ε = keccak256(prefix : chainId : predecessorId : path)`, child = `rootPub + ε·G`, with `predecessorId = sender = operatorsHash`. The prefix (`"sig.network v2.0.0 epsilon derivation"`) and `canton:global` chain id are authoritative in signet.js: [`deriveChildPublicKey`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/utils/cryptography.ts#L90-L122), [`KDF_CHAIN_IDS`](https://github.com/sig-net/signet.js/blob/a301d05a1c94f3e6bbf962f123d2f18236aef510/src/constants.ts#L35-L39):
 
 - The **EVM child address** (`path` = whatever you pass on `RequestSignature`; `canton-sig`'s `deriveDepositAddress` does this in one call).
 - The **response-verification pubkey** for constant `path = "canton response key"` — store this on your contract so `secp256k1WithEcdsaOnly` can verify `RespondBidirectionalEvent.signature` on-ledger. See [Security checklist #4](#security-checklist-for-integrators).
@@ -123,8 +127,8 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
       caip2Id
       keyVersion = 1
       path = fullPath
-      algo = ""
-      dest = ""
+      algo = "ECDSA"
+      dest = "ethereum"
       params = ""
       outputDeserializationSchema = "[{\"name\":\"\",\"type\":\"bool\"}]"
       respondSerializationSchema  = "[{\"name\":\"\",\"type\":\"bool\"}]"
@@ -218,7 +222,7 @@ nonconsuming choice MyDomainClaim : ...
 | `secp256k1WithEcdsaOnly` returns `False`                                                       | Signature does not match `responseHash` under your stored response-verification pubkey                                                                                                                                                                                                                                                              | Reject the claim. Either the wrong pubkey is stored (e.g. someone stored the root by mistake — see Security checklist #4) or the response is forged. Escalate, do not retry.                                                                                                  |
 | Only one of the two response events ever arrives                                               | The downstream-chain operation has not been submitted yet, or the destination chain has not confirmed it                                                                                                                                                                                                                                            | Submit or resubmit the downstream-chain operation. There is no Canton-side timeout, and you **must not** add a wall-clock refund of optimistically-debited state — see [Recovering a stuck destination-chain transaction](#recovering-a-stuck-destination-chain-transaction). |
 | `Consume_*` exercised twice                                                                    | Second exercise fails because the contract is already archived                                                                                                                                                                                                                                                                                      | Idempotent at your level (your claim choice should archive the anchor first, so a duplicate claim won't reach `Consume_*`).                                                                                                                                                   |
-| Duplicate `SignBidirectionalEvent` with identical `requestId`                                  | Replay attempt                                                                                                                                                                                                                                                                                                                                      | Signing is RFC6979-deterministic, so duplicates produce identical signatures. Your single-use anchor prevents acting on it twice.                                                                                                                                             |
+| Duplicate `SignBidirectionalEvent` with identical `requestId`                                  | Replay attempt                                                                                                                                                                                                                                                                                                                                      | A duplicate request signs the identical digest — same signing address and nonce — so at most one tx can land. Your single-use anchor prevents acting on it twice.                                                                                                             |
 
 ### Recovering a stuck destination-chain transaction
 
@@ -250,7 +254,7 @@ Replay-protection options (pick what fits your threat model):
 
 - A registry contract that records every used `requestId` (nullifier set).
 - Off-chain operator enforcement via a request-approve flow before the consumer ever calls `RequestSignature`.
-- Nothing — relying on the destination chain's nonce when a duplicate sign is harmless (signing is RFC6979-deterministic, so duplicates produce identical signatures and only one tx can land).
+- Nothing — relying on the destination chain's nonce when a duplicate sign is harmless (duplicate requests sign the identical digest — same signing address and nonce — so only one tx can land).
 
 For a complete worked consumer, see [`signet-vault-v1/daml/Erc20Vault.daml`](../signet-vault-v1/daml/Erc20Vault.daml).
 
@@ -295,9 +299,9 @@ Singleton identity contract, **co-signed by `sigNetwork` (the MPC party) and `si
 | `caip2Id`                     | `Text`     | **Destination** chain CAIP-2 id, e.g. `"eip155:1"` (mainnet) or `"eip155:11155111"` (Sepolia). Build as `"eip155:" <> chainIdToDecimalText chainId` (from `signet-eip712`). |
 | `keyVersion`                  | `Int`      | KDF version. Use `1` (the latest supported).                                                                                                                                |
 | `path`                        | `Text`     | KDF subkey path. Consumer namespaces by deployment id when reusing operator sets (Security checklist #3). The Signer cannot enforce this.                                   |
-| `algo`                        | `Text`     | Always `""`. Hashed into `requestId` for forwards-compat; no current code path branches on it.                                                                              |
-| `dest`                        | `Text`     | Always `""`. Same.                                                                                                                                                          |
-| `params`                      | `Text`     | Always `""`. Same.                                                                                                                                                          |
+| `algo`                        | `Text`     | Opaque; hashed into `requestId` — no current code path branches on it. In-repo consumers pass `"ECDSA"`.                                                                    |
+| `dest`                        | `Text`     | Same; in-repo consumers pass `"ethereum"`.                                                                                                                                  |
+| `params`                      | `Text`     | Same; in-repo consumers pass `""`.                                                                                                                                          |
 | `outputDeserializationSchema` | `Text`     | JSON ABI fragment, e.g. `[{"name":"","type":"bool"}]`. Tells the MPC how to ABI-encode the simulated return value into `serializedOutput`.                                  |
 | `respondSerializationSchema`  | `Text`     | Schema describing how the response is signed. Same value as `outputDeserializationSchema` in current usage.                                                                 |
 
