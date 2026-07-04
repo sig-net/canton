@@ -9,8 +9,8 @@ Tested on macOS Sequoia 15.4 (Apple Silicon M3 Max, 128 GB RAM).
 | Tool           | Version                                  | Purpose                                                 |
 | -------------- | ---------------------------------------- | ------------------------------------------------------- |
 | Docker Desktop | Engine >= 27, **8 GB+ memory allocated** | Runs all Canton services as containers                  |
-| Nix            | >= 2.33                                  | Reproducible dev toolchain (JDK, Node, Daml SDK)        |
-| direnv         | >= 2.37                                  | Auto-activates Nix shell when you `cd` into the project |
+| Nix            | any recent (tested with 2.33)            | Reproducible dev toolchain (JDK, Node, Daml SDK)        |
+| direnv         | any recent (tested with 2.37)            | Auto-activates Nix shell when you `cd` into the project |
 
 ### 1. Docker Desktop
 
@@ -55,7 +55,7 @@ echo 'experimental-features = nix-command flakes' > ~/.config/nix/nix.conf
 ### 4. Install direnv
 
 ```bash
-nix profile install nixpkgs#direnv
+nix profile add nixpkgs#direnv
 ```
 
 Add the shell hook to `~/.zshrc` (or `~/.bashrc`):
@@ -122,7 +122,7 @@ TEST_MODE=off
 EOF
 ```
 
-**PARTY_HINT format:** Must match `<organization>-<function>-<integer>` where organization and function are letters-only and the enumerator is an integer. Examples: `signet-mpc-1`, `myorg-dev-1`. Invalid examples: `signet-canton-mpc` (three segments without integer), `my_org-dev-1` (underscores). Splice will crash in a restart loop with `INVALID_ARGUMENT` if the format is wrong.
+**PARTY_HINT format:** `<organization>-<function>-<enumerator>` (per the Splice validator docs) — three hyphen-separated segments, the last an integer. Examples: `signet-mpc-1`, `myorg-dev-1`. Invalid: `signet-canton-mpc` (no trailing integer). Splice will crash in a restart loop with `INVALID_ARGUMENT` if the format is wrong.
 
 ### 3. Build
 
