@@ -17,7 +17,7 @@ This is the deployment guide for teams building a Daml consumer package on top o
 
 - **A Canton participant/validator node** connected to the target network, set up per the official Canton docs. Your participant's JSON Ledger API and its OIDC auth are yours to configure — sig-net never proxies your submissions.
 - **Daml SDK (DPM) 3.5.1** for building your consumer package.
-- **From sig-net** (ask us): the disclosure endpoint URL and, if your templates pin the expected MPC party (the worked example stores it and cross-checks it in its claim choice — recommended), the `sigNetwork` party id. Everything else you need is public.
+- **From sig-net** (ask us): the disclosure endpoint URL. Everything else you need is public.
 
 Per-network values that are already public:
 
@@ -64,7 +64,7 @@ Upload via `POST /v2/dars?vetAllPackages=true` (or `canton-sig`'s `uploadDar`); 
 
 - your consumer DAR (its closure pulls in `signet-signer-v1`, `signet-eip712`, `signet-api-fee-v1`, and the splice token interfaces),
 - `signet-fee-amulet-0.0.1.dar` — the signature-fee charge executes in a subtree your participant confirms,
-- `signet-vault-v1-0.0.1.dar` only if you use the Vault.
+- `signet-vault-v1-0.0.2.dar` only if you use the Vault.
 
 As general vetting hygiene: **vet only official packages from trusted sources** — the checksum-verified release assets here, and Splice/token-standard packages from your own validator deployment. Treat vetting anything else like a production deploy approval.
 
@@ -73,7 +73,7 @@ As general vetting hygiene: **vet only official packages from trusted sources** 
 Follow the [`canton-sig` README](ts-packages/canton-sig/README.md) — with these own-node specifics:
 
 - **Ledger + auth are yours.** `CantonClient` points at your participant's JSON API; `options.getToken` uses your IdP. Your requester parties and their ledger users live on your participant — sig-net is not involved.
-- **Disclosed contracts come from the disclosure endpoint.** It serves everything your submissions must attach: the `Signer` envelope, the fee-contract envelopes, and the `Vault` envelope if you use ours. Attach them on your request choice (`[yourContractDisclosure, signerDisclosure, ...feeDisclosures]`); your claim/completion choice needs only your own contract's disclosure. Parties are not disclosed — a party is just an identifier; the only one you may need is `sigNetwork` (see the onboarding packet above), and `sigNetworkFA` is not needed in the normal flow.
+- **Disclosed contracts come from the disclosure endpoint.** It serves everything your submissions must attach: the `Signer` envelope, the fee-contract envelopes, and the `Vault` envelope if you use ours. Attach them on your request choice (`[yourContractDisclosure, signerDisclosure, ...feeDisclosures]`); your claim/completion choice needs only your own contract's disclosure. Parties are not disclosed — a party is just an identifier, and the normal flow needs no sig-net party ids at all.
 - **Disclosures of your contracts to your users** (who can't read them from their own ACS) are yours to serve — [`apps/disclosure-api`](apps/disclosure-api/README.md) is a copyable pattern.
 - **The signature fee rides along automatically.** Your request choice forwards three fee arguments to `RequestSignature`; fill them from what the disclosure endpoint serves, as [`test/src/test/devnet-e2e.test.ts`](test/src/test/devnet-e2e.test.ts) does.
 
@@ -88,7 +88,7 @@ How you test is up to you; as reference implementations to model your own checks
 - [ ] Node live on the target network; authenticated JSON API call works
 - [ ] Release DARs downloaded and checksum-verified; consumer package compiles against them (SDK 3.5.1)
 - [ ] Consumer DAR + `signet-fee-amulet` (+ `signet-vault-v1` if used) vetted on your participant
-- [ ] Disclosure endpoint reachable; `sigNetwork` party id received if your templates pin it
+- [ ] Disclosure endpoint reachable
 - [ ] Client wired: your auth, disclosure fetching and attachment
 - [ ] Full loop green on DevNet, then TestNet
 - [ ] [Security checklist](daml-packages/signet-signer-v1/SECURITY.md) reviewed for your consumer templates

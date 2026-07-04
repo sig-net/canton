@@ -105,7 +105,7 @@ export {
   Erc20Holding,
   PendingDeposit,
   PendingWithdrawal,
-} from "@daml.js/signet-vault-v1-0.0.1/lib/Erc20Vault/module";
+} from "@daml.js/signet-vault-v1-0.0.2/lib/Erc20Vault/module";
 
 // DAR path (resolves to dist/ after build)
-export const DAR_PATH = fileURLToPath(new URL("signet-vault-v1-0.0.1.dar", import.meta.url));
+export const DAR_PATH = fileURLToPath(new URL("signet-vault-v1-0.0.2.dar", import.meta.url));

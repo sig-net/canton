@@ -49,7 +49,7 @@ const LOCAL_PKG_ID = "7078d1d1b66d15451613184450105816e651f04061df97419aa2107fcd
 const VAULT_TEMPLATE_ID = `${LOCAL_PKG_ID}:Erc20Vault:Vault`;
 const DAR_PATH = fileURLToPath(
   new URL(
-    "../../../daml-packages/signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar",
+    "../../../daml-packages/signet-vault-v1/.daml/dist/signet-vault-v1-0.0.2.dar",
     import.meta.url,
   ),
 );
@@ -129,7 +129,6 @@ async function main(): Promise<void> {
 
   const payload = {
     operators: [PARTY],
-    sigNetwork: PARTY,
     evmVaultAddress: evmVaultAddressSlot,
     mpcResponseVerifyKey,
     vaultId: VAULT_ID,

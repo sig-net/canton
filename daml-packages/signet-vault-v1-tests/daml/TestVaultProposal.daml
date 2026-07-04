@@ -14,9 +14,9 @@ dirtyVaultAddress = "ffffffffffffffffffffffffd8da6bf26964af9d7eed9e03e53415d37aa
 
 -- Canonical VaultProposal payload; tests vary operators/signed/vaultId and
 -- override the address under test via record update.
-mkProposal : Party -> [Party] -> [Party] -> Text -> VaultProposal
-mkProposal sigNetwork allOperators alreadySigned vaultId = VaultProposal with
-  allOperators; alreadySigned; sigNetwork
+mkProposal : [Party] -> [Party] -> Text -> VaultProposal
+mkProposal allOperators alreadySigned vaultId = VaultProposal with
+  allOperators; alreadySigned
   evmVaultAddress = sampleVaultAddress
   mpcResponseVerifyKey = testPubKeyHex
   vaultId
@@ -28,13 +28,12 @@ mkProposal sigNetwork allOperators alreadySigned vaultId = VaultProposal with
 -- one remaining signer completes the proposal → Right (Vault) with correct operators
 testSingleOperatorProposal : Script ()
 testSingleOperatorProposal = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
-  op2        <- allocateParty "Op2"
+  op1 <- allocateParty "Op1"
+  op2 <- allocateParty "Op2"
 
   -- op1 bootstraps the proposal; op2 is the sole remaining signer
   proposalCid <- submit op1 do
-    createCmd (mkProposal sigNetwork [op1, op2] [op1] "single-sign-vault")
+    createCmd (mkProposal [op1, op2] [op1] "single-sign-vault")
 
   result <- submit op2 do
     exerciseCmd proposalCid SignVault with signer = op2
@@ -44,7 +43,6 @@ testSingleOperatorProposal = do
       vault <- queryContractId op1 vaultCid
       let v = fromSome vault
       assertMsg "operators" (v.operators == [op1, op2])
-      assertMsg "sigNetwork" (v.sigNetwork == sigNetwork)
       assertMsg "vaultId" (v.vaultId == "single-sign-vault")
     Left _ -> abort "Expected Right (Vault), got Left (proposal)"
 
@@ -55,13 +53,12 @@ testSingleOperatorProposal = do
 -- three operators: op2 signs (Left), op3 signs (Right/Vault) with all three operators
 testTwoOperatorSequentialSign : Script ()
 testTwoOperatorSequentialSign = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
-  op2        <- allocateParty "Op2"
-  op3        <- allocateParty "Op3"
+  op1 <- allocateParty "Op1"
+  op2 <- allocateParty "Op2"
+  op3 <- allocateParty "Op3"
 
   proposalCid <- submit op1 do
-    createCmd (mkProposal sigNetwork [op1, op2, op3] [op1] "three-op-vault")
+    createCmd (mkProposal [op1, op2, op3] [op1] "three-op-vault")
 
   -- op2 signs → Left (still waiting for op3)
   result1 <- submit op2 do
@@ -80,7 +77,6 @@ testTwoOperatorSequentialSign = do
       vault <- queryContractId op1 vaultCid
       let v = fromSome vault
       assertMsg "operators" (v.operators == [op1, op2, op3])
-      assertMsg "sigNetwork" (v.sigNetwork == sigNetwork)
       assertMsg "vaultId" (v.vaultId == "three-op-vault")
     Left _ -> abort "Expected Right (Vault), got Left (proposal)"
 
@@ -91,13 +87,12 @@ testTwoOperatorSequentialSign = do
 -- operator who already signed cannot sign again (filtered out by toSign)
 testDoubleSignFails : Script ()
 testDoubleSignFails = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
-  op2        <- allocateParty "Op2"
-  op3        <- allocateParty "Op3"
+  op1 <- allocateParty "Op1"
+  op2 <- allocateParty "Op2"
+  op3 <- allocateParty "Op3"
 
   proposalCid <- submit op1 do
-    createCmd (mkProposal sigNetwork [op1, op2, op3] [op1] "double-sign-vault")
+    createCmd (mkProposal [op1, op2, op3] [op1] "double-sign-vault")
 
   -- op2 signs → Left (new proposal with alreadySigned=[op2, op1])
   result <- submit op2 do
@@ -124,13 +119,12 @@ testDoubleSignFails = do
 -- party not in allOperators has no visibility and cannot exercise SignVault
 testNonObserverCannotExercise : Script ()
 testNonObserverCannotExercise = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
-  op2        <- allocateParty "Op2"
-  rogue      <- allocateParty "Rogue"
+  op1   <- allocateParty "Op1"
+  op2   <- allocateParty "Op2"
+  rogue <- allocateParty "Rogue"
 
   proposalCid <- submit op1 do
-    createCmd (mkProposal sigNetwork [op1, op2] [op1] "rogue-vault")
+    createCmd (mkProposal [op1, op2] [op1] "rogue-vault")
 
   submitMustFail rogue do
     exerciseCmd proposalCid SignVault with signer = rogue
@@ -144,11 +138,10 @@ testNonObserverCannotExercise = do
 -- VaultProposal with allOperators=[] is rejected by ensure clause
 testEmptyOperatorsFails : Script ()
 testEmptyOperatorsFails = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
+  op1 <- allocateParty "Op1"
 
   submitMustFail op1 do
-    createCmd (mkProposal sigNetwork [] [op1] "empty-ops")
+    createCmd (mkProposal [] [op1] "empty-ops")
 
   pure ()
 
@@ -159,11 +152,10 @@ testEmptyOperatorsFails = do
 -- VaultProposal with duplicate allOperators is rejected by ensure clause
 testDuplicateOperatorsFails : Script ()
 testDuplicateOperatorsFails = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
+  op1 <- allocateParty "Op1"
 
   submitMustFail op1 do
-    createCmd (mkProposal sigNetwork [op1, op1] [op1] "dup-ops")
+    createCmd (mkProposal [op1, op1] [op1] "dup-ops")
 
   pure ()
 
@@ -174,11 +166,10 @@ testDuplicateOperatorsFails = do
 -- VaultProposal rejects ABI address slots whose high 12 bytes are not zero.
 testDirtyVaultAddressPaddingFails : Script ()
 testDirtyVaultAddressPaddingFails = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
+  op1 <- allocateParty "Op1"
 
   submitMustFail op1 do
-    createCmd ((mkProposal sigNetwork [op1] [op1] "dirty-address-proposal")
+    createCmd ((mkProposal [op1] [op1] "dirty-address-proposal")
       with evmVaultAddress = dirtyVaultAddress)
 
   pure ()
@@ -192,13 +183,12 @@ testDirtyVaultAddressPaddingFails = do
 -- op3 signs before op2 → same Vault result (sort-based completion check)
 testSigningOrderIndependence : Script ()
 testSigningOrderIndependence = do
-  sigNetwork <- allocateParty "SigNetwork"
-  op1        <- allocateParty "Op1"
-  op2        <- allocateParty "Op2"
-  op3        <- allocateParty "Op3"
+  op1 <- allocateParty "Op1"
+  op2 <- allocateParty "Op2"
+  op3 <- allocateParty "Op3"
 
   proposalCid <- submit op1 do
-    createCmd (mkProposal sigNetwork [op1, op2, op3] [op1] "order-vault")
+    createCmd (mkProposal [op1, op2, op3] [op1] "order-vault")
 
   -- op3 signs first (out of list order) → Left (still waiting for op2)
   result1 <- submit op3 do
@@ -217,7 +207,6 @@ testSigningOrderIndependence = do
       vault <- queryContractId op1 vaultCid
       let v = fromSome vault
       assertMsg "operators" (v.operators == [op1, op2, op3])
-      assertMsg "sigNetwork" (v.sigNetwork == sigNetwork)
       assertMsg "vaultId" (v.vaultId == "order-vault")
     Left _ -> abort "Expected Right (Vault), got Left (proposal)"
 
@@ -240,7 +229,7 @@ testProposalToDepositLifecycle = do
 
   -- Step 2: Propose vault with 2 operators
   proposalCid <- submit op1 do
-    createCmd (mkProposal sigNetwork [op1, op2] [op1] "lifecycle-vault")
+    createCmd (mkProposal [op1, op2] [op1] "lifecycle-vault")
 
   -- Step 3: op2 signs → Vault created
   result <- submit op2 do
@@ -253,7 +242,6 @@ testProposalToDepositLifecycle = do
   vault <- queryContractId op1 vaultCid
   let v = fromSome vault
   assertMsg "vault operators" (v.operators == [op1, op2])
-  assertMsg "sigNetwork" (v.sigNetwork == sigNetwork)
 
   -- Step 4: RequestDeposit through the proposal-created vault
   feeRegistrationCid <- mkVaultFeeInfra sigNetworkFA

@@ -69,7 +69,7 @@ const dar = (rel: string): string =>
 const DARS = [
   dar("signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar"),
   dar("signet-fee-amulet/.daml/dist/signet-fee-amulet-0.0.1.dar"),
-  dar("signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar"),
+  dar("signet-vault-v1/.daml/dist/signet-vault-v1-0.0.2.dar"),
 ];
 
 function reqEnv(name: string): string {
@@ -332,7 +332,6 @@ async function main(): Promise<void> {
       VAULT_TID,
       {
         operators: [PARTY],
-        sigNetwork: PARTY,
         evmVaultAddress: evmVaultAddressSlot,
         mpcResponseVerifyKey,
         vaultId: VAULT_ID,

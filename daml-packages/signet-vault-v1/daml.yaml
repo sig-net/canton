@@ -1,6 +1,6 @@
 sdk-version: 3.5.1
 name: signet-vault-v1
-version: 0.0.1
+version: 0.0.2
 
 # --- Smart Contract Upgrade (SCU) checking ------------------------------------
 # Upgradable template package: non-breaking releases keep this exact `name` and
@@ -13,7 +13,10 @@ version: 0.0.1
 # uncomment `upgrades:` below (see ./prior/README.md). CI also runs
 # `scripts/scu-upgrade-check.sh`, which checks against ./prior/ when present.
 typecheck-upgrades: yes
-# upgrades: ./prior/signet-vault-v1-0.0.1.dar
+# NOTE: 0.0.2 deliberately breaks from 0.0.1 (removed the sigNetwork stakeholder to
+# make the package a self-contained integrator example), so 0.0.1 is NOT a valid SCU
+# baseline — do not add it to ./prior/. Baselines resume from 0.0.2 onward.
+# upgrades: ./prior/signet-vault-v1-0.0.2.dar
 source: daml
 dependencies:
   - daml-prim

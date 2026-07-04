@@ -17,7 +17,7 @@ describe("package exports (ESM)", () => {
 
   it("exports DAR_PATH as a string", () => {
     expect(typeof DAR_PATH).toBe("string");
-    expect(DAR_PATH).toContain("signet-vault-v1-0.0.1.dar");
+    expect(DAR_PATH).toContain("signet-vault-v1-0.0.2.dar");
   });
 
   it("CantonClient can be instantiated with default URL", () => {

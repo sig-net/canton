@@ -267,7 +267,7 @@ The FA fee endpoint (`POST` `FEE_COLLECTOR_ENDPOINT_PATH`) serves the same `FeeC
 
 ### Re-exported Daml templates
 
-From `@daml.js/signet-signer-v1-0.0.1` and `@daml.js/signet-vault-v1-0.0.1`: `Signer`, `SignerProposal`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
+From `@daml.js/signet-signer-v1-0.0.1` and `@daml.js/signet-vault-v1-0.0.2`: `Signer`, `SignerProposal`, `SignBidirectionalEvent`, `SignatureRespondedEvent`, `RespondBidirectionalEvent`, `Vault`, `VaultProposal`, `Erc20Holding`, `PendingDeposit`, `PendingWithdrawal`.
 
 ### Types
 

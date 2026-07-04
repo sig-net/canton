@@ -50,12 +50,10 @@ txRecipientAddress label evmTxParams =
 validateRespondBidirectionalEvent : Text
   -> [Party]
   -> Party
-  -> Party
   -> BytesHex
   -> RespondBidirectionalEvent
   -> Update ()
-validateRespondBidirectionalEvent label expectedOperators expectedRequester expectedSigNetwork expectedRequestId event = do
-  assertMsg (label <> " sigNetwork mismatch") (event.sigNetwork == expectedSigNetwork)
+validateRespondBidirectionalEvent label expectedOperators expectedRequester expectedRequestId event = do
   assertMsg (label <> " operators mismatch") (sameOperatorSet expectedOperators event.operators)
   assertMsg (label <> " requester mismatch") (event.requester == expectedRequester)
   assertMsg (label <> " requestId mismatch") (event.requestId == expectedRequestId)
@@ -63,12 +61,10 @@ validateRespondBidirectionalEvent label expectedOperators expectedRequester expe
 validateSignatureRespondedEvent : Text
   -> [Party]
   -> Party
-  -> Party
   -> BytesHex
   -> SignatureRespondedEvent
   -> Update ()
-validateSignatureRespondedEvent label expectedOperators expectedRequester expectedSigNetwork expectedRequestId event = do
-  assertMsg (label <> " sigNetwork mismatch") (event.sigNetwork == expectedSigNetwork)
+validateSignatureRespondedEvent label expectedOperators expectedRequester expectedRequestId event = do
   assertMsg (label <> " operators mismatch") (sameOperatorSet expectedOperators event.operators)
   assertMsg (label <> " requester mismatch") (event.requester == expectedRequester)
   assertMsg (label <> " requestId mismatch") (event.requestId == expectedRequestId)
@@ -85,7 +81,7 @@ template Erc20Holding
     amount       : BytesHex
   where
     signatory operators
-    observer owner  -- sigNetwork intentionally NOT an observer — domain contracts decoupled from MPC layer
+    observer owner
     ensure isBytesN 20 erc20Address && isBytesN 32 amount
 
 -- ---------------------------------------------------------------------------
@@ -96,20 +92,18 @@ template PendingDeposit
   with
     operators    : [Party]
     requester    : Party
-    sigNetwork   : Party
     requestId    : BytesHex
     evmTxParams  : EvmType2TransactionParams
     signEventCid : ContractId SignBidirectionalEvent
   where
     signatory operators
-    observer requester, sigNetwork
+    observer requester
     ensure not (null operators) && isBytesN 32 requestId && validEvmType2TransactionParams evmTxParams
 
 template PendingWithdrawal
   with
     operators    : [Party]
     requester    : Party
-    sigNetwork   : Party
     requestId    : BytesHex
     evmTxParams  : EvmType2TransactionParams
     signEventCid : ContractId SignBidirectionalEvent
@@ -117,7 +111,7 @@ template PendingWithdrawal
     amount       : BytesHex
   where
     signatory operators
-    observer requester, sigNetwork
+    observer requester
     ensure not (null operators)
       && isBytesN 32 requestId
       && validEvmType2TransactionParams evmTxParams
@@ -136,7 +130,6 @@ template VaultProposal
   with
     allOperators    : [Party]
     alreadySigned   : [Party]
-    sigNetwork      : Party
     evmVaultAddress : BytesHex
     mpcResponseVerifyKey : PublicKeyHex
     vaultId         : Text
@@ -154,7 +147,7 @@ template VaultProposal
         let newSigned = signer :: alreadySigned
         if sameOperatorSet newSigned allOperators
           then Right <$> create Vault with
-            operators = allOperators; sigNetwork
+            operators = allOperators
             evmVaultAddress; mpcResponseVerifyKey; vaultId
           else Left <$> create this with alreadySigned = newSigned
 
@@ -165,13 +158,11 @@ template VaultProposal
 template Vault
   with
     operators       : [Party]
-    sigNetwork      : Party
     evmVaultAddress : BytesHex
     mpcResponseVerifyKey : PublicKeyHex
     vaultId         : Text
   where
     signatory operators
-    observer sigNetwork
     ensure not (null operators) && unique operators
       && isAbiAddressSlot evmVaultAddress
 
@@ -239,7 +230,7 @@ template Vault
         let requestId = requestIdFromSignEvent signEvent
 
         pendingCid <- create PendingDeposit with
-          operators; requester; sigNetwork; requestId; evmTxParams; signEventCid
+          operators; requester; requestId; evmTxParams; signEventCid
 
         pure (signEventCid, pendingCid)
 
@@ -258,10 +249,10 @@ template Vault
         assertMsg "Operators mismatch" (sameOperatorSet pending.operators operators)
 
         outcome <- fetch respondBidirectionalEventCid
-        validateRespondBidirectionalEvent "Outcome" operators requester sigNetwork pending.requestId outcome
+        validateRespondBidirectionalEvent "Outcome" operators requester pending.requestId outcome
 
         signatureResponse <- fetch signatureRespondedEventCid
-        validateSignatureRespondedEvent "Signature response" operators requester sigNetwork pending.requestId signatureResponse
+        validateSignatureRespondedEvent "Signature response" operators requester pending.requestId signatureResponse
 
         let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
         assertMsg "Invalid MPC signature"
@@ -347,7 +338,7 @@ template Vault
         let requestId = requestIdFromSignEvent signEvent
 
         pendingCid <- create PendingWithdrawal with
-          operators; requester; sigNetwork; requestId; evmTxParams; signEventCid
+          operators; requester; requestId; evmTxParams; signEventCid
           erc20Address = holding.erc20Address
           amount = holding.amount
 
@@ -368,10 +359,10 @@ template Vault
         assertMsg "Operators mismatch" (sameOperatorSet pending.operators operators)
 
         outcome <- fetch respondBidirectionalEventCid
-        validateRespondBidirectionalEvent "Outcome" operators requester sigNetwork pending.requestId outcome
+        validateRespondBidirectionalEvent "Outcome" operators requester pending.requestId outcome
 
         signatureResponse <- fetch signatureRespondedEventCid
-        validateSignatureRespondedEvent "Signature response" operators requester sigNetwork pending.requestId signatureResponse
+        validateSignatureRespondedEvent "Signature response" operators requester pending.requestId signatureResponse
 
         let responseHash = computeResponseHash pending.requestId outcome.serializedOutput
         assertMsg "Invalid MPC signature"
