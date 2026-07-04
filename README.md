@@ -29,7 +29,7 @@ This repo is the **Canton source-chain implementation** of the chain-agnostic [S
 
 The `signet-vault-v1` package is one consumer of this protocol — the worked integrator example: ERC-20 holdings, deposit anchors, and refund-on-failure withdrawal are domain logic on top of the generic Signer.
 
-Per-package details live in the documents listed under [Where to start](#where-to-start). Earlier design notes under `proposals/` describe pre-current iterations and may not reflect the shipped code.
+Per-package details live in each package's README. Earlier design notes under `proposals/` describe pre-current iterations and may not reflect the shipped code.
 
 ## Prerequisites
 
