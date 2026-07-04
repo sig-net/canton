@@ -12,7 +12,7 @@ Contract Upgrade of it.
    _breaking_ change ships as a new name (`signet-vault-v2`), not a bump here.
 2. Copy the last released DAR into this directory:
    ```
-   cp <released>/signet-vault-v1-0.0.1.dar prior/
+   cp <released>/signet-vault-v1-0.0.2.dar prior/
    ```
 3. (Optional build-time gate) Uncomment the matching `upgrades:` line in
    `../daml.yaml` so `dpm build` itself fails fast on an incompatible change.

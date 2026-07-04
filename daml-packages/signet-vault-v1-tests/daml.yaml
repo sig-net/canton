@@ -7,7 +7,7 @@ dependencies:
   - daml-stdlib
   - daml-script
 data-dependencies:
-  - ../signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar
+  - ../signet-vault-v1/.daml/dist/signet-vault-v1-0.0.2.dar
   - ../signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar
   - ../signet-signer-v1-tests/.daml/dist/signet-signer-v1-tests-0.0.1.dar
   - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar

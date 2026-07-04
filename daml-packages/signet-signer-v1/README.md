@@ -142,7 +142,7 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
     -- 1e. Persist your single-use anchor. Keep signEventCid so the claim/completion
     -- choice can retire the request event after the MPC evidence is validated.
     anchorCid <- create MyAnchor with
-      operators; requester; sigNetwork; requestId; evmTxParams; signEventCid
+      operators; requester; requestId; evmTxParams; signEventCid
 
     pure (signEventCid, anchorCid)
 ```
@@ -182,13 +182,11 @@ nonconsuming choice MyDomainClaim : ...
 
     -- Both response events must match the anchor.
     outcome <- fetch respondBidirectionalEventCid
-    assertMsg "outcome sigNetwork mismatch" (outcome.sigNetwork  == sigNetwork)
     assertMsg "outcome operators mismatch"  (sort outcome.operators == sort operators)
     assertMsg "outcome requester mismatch"  (outcome.requester  == requester)
     assertMsg "outcome requestId mismatch"  (outcome.requestId  == anchor.requestId)
 
     sigResp <- fetch signatureRespondedEventCid
-    assertMsg "sigResp sigNetwork mismatch" (sigResp.sigNetwork == sigNetwork)
     assertMsg "sigResp operators mismatch"  (sort sigResp.operators == sort operators)
     assertMsg "sigResp requester mismatch"  (sigResp.requester  == requester)
     assertMsg "sigResp requestId mismatch"  (sigResp.requestId  == anchor.requestId)

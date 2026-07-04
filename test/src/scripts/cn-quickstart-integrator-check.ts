@@ -12,12 +12,14 @@
  *                                       there, its operator + requester parties, its
  *                                       Vault, and every consumer-side exercise.
  *
- * Flow: vet DARs on both nodes → allocate parties → Signer + fee bootstrap (provider)
- * → Vault create (integrator node; sigNetwork observer makes it cross-participant)
- * → RequestDeposit with disclosed Signer + fee contracts (cross-participant exercise)
- * → simulated MPC Respond / RespondBidirectional (provider, signed with derived child
- * keys) → ClaimDeposit (integrator node; on-ledger secp256k1 verification of the
- * simulated outcome signature) → Erc20Holding minted.
+ * Flow: vet shared DARs on both nodes and the consumer (vault) DAR ONLY on the
+ * integrator node — no sig-net party is a stakeholder of the vault templates, so the
+ * operator participant never needs the consumer package — → allocate parties → Signer
+ * + fee bootstrap (provider) → Vault create (integrator node) → RequestDeposit with
+ * disclosed Signer + fee contracts (cross-participant exercise) → simulated MPC
+ * Respond / RespondBidirectional (provider, signed with derived child keys) →
+ * ClaimDeposit (integrator node; on-ledger secp256k1 verification of the simulated
+ * outcome signature) → Erc20Holding minted.
  *
  * Run while `make start` (cn-quickstart, AUTH_MODE=oauth2) is up:
  *   cd test && pnpm exec tsx src/scripts/cn-quickstart-integrator-check.ts
@@ -72,11 +74,13 @@ const USER_CLIENT_SECRET =
 
 // The exact DARs an integrator downloads from the GitHub release. Built locally here;
 // byte-identical to the release assets (CI/tag discipline — see CLAUDE.md "Releasing").
-const DARS = [
+const SHARED_DARS = [
   "../daml-packages/signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar",
   "../daml-packages/signet-fee-amulet/.daml/dist/signet-fee-amulet-0.0.1.dar",
-  "../daml-packages/signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar",
 ];
+// The consumer package: vetted ONLY on the integrator participant — no sig-net party
+// is a stakeholder of its templates, so the operator node never sees it.
+const CONSUMER_DAR = "../daml-packages/signet-vault-v1/.daml/dist/signet-vault-v1-0.0.2.dar";
 
 // ── Simulated MPC root key (throwaway; local rehearsal only) ──────────────────
 const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n; // secp256k1 order
@@ -178,13 +182,15 @@ async function main() {
   console.log(`  provider participant ${PROVIDER_API} (user ${provider.sub})`);
   console.log(`  integrator participant ${USER_API} (user ${user.sub})`);
 
-  // ── 1. Vet the release DARs on BOTH participants ─────────────────────────────
-  step("Uploading + vetting DARs on both participants");
-  for (const dar of DARS) {
+  // ── 1. Vet DARs: shared packages on both, the consumer package ONLY integrator-side ─
+  step("Uploading + vetting DARs");
+  for (const dar of SHARED_DARS) {
     await providerCanton.uploadDar(dar);
     await userCanton.uploadDar(dar);
-    console.log(`  vetted ${dar.split("/").pop()} on both`);
+    console.log(`  vetted ${dar.split("/").pop()} on both participants`);
   }
+  await userCanton.uploadDar(CONSUMER_DAR);
+  console.log(`  vetted ${CONSUMER_DAR.split("/").pop()} on the integrator participant ONLY`);
 
   // ── 2. Parties: operator side on provider, integrator side on its own node ──
   step("Allocating parties");
@@ -287,7 +293,7 @@ async function main() {
     `  fee context ready (registration ${collector.registrationCid.slice(0, 12)}…, free mode)`,
   );
 
-  // ── 5. Vault on the INTEGRATOR node (sigNetwork observer → cross-participant) ─
+  // ── 5. Vault on the INTEGRATOR node (operators-only stakeholders) ─────────────
   step("Creating the integrator Vault on the integrator participant");
   const operators = [integratorOp];
   const operatorsHash = computeOperatorsHash(operators);
@@ -311,7 +317,6 @@ async function main() {
   } else {
     const vaultRes = await userCanton.createContract(user.sub, [integratorOp], VAULT_T, {
       operators,
-      sigNetwork,
       evmVaultAddress: evmVaultAddressSlot,
       mpcResponseVerifyKey: `${SPKI_PREFIX}${responsePub}`,
       vaultId: VAULT_ID,
@@ -489,7 +494,7 @@ async function main() {
     `\n[check] PASS — Erc20Holding ${holding.contractId.slice(0, 12)}… minted for ${requester}`,
   );
   console.log("[check] Cross-participant integrator path validated:");
-  console.log("  • release DARs vetted on both participants");
+  console.log("  • shared DARs vetted on both participants; consumer DAR only on the integrator's");
   console.log("  • Signer + zero-fee infra on the operator node; Vault on the integrator node");
   console.log("  • RequestDeposit via disclosed Signer/Vault/fee contracts across participants");
   console.log("  • MPC evidence events delivered to the integrator participant");

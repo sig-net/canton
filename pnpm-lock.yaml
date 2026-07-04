@@ -129,9 +129,9 @@ importers:
       '@daml.js/signet-signer-v1-0.0.1':
         specifier: file:./generated/model/signet-signer-v1-0.0.1
         version: file:ts-packages/canton-sig/generated/model/signet-signer-v1-0.0.1
-      '@daml.js/signet-vault-v1-0.0.1':
-        specifier: file:./generated/model/signet-vault-v1-0.0.1
-        version: file:ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.1
+      '@daml.js/signet-vault-v1-0.0.2':
+        specifier: file:./generated/model/signet-vault-v1-0.0.2
+        version: file:ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.2
       '@types/node':
         specifier: ^25.3.0
         version: 25.5.0
@@ -254,8 +254,8 @@ packages:
   '@daml.js/signet-signer-v1-0.0.1@file:ts-packages/canton-sig/generated/model/signet-signer-v1-0.0.1':
     resolution: {directory: ts-packages/canton-sig/generated/model/signet-signer-v1-0.0.1, type: directory}
 
-  '@daml.js/signet-vault-v1-0.0.1@file:ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.1':
-    resolution: {directory: ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.1, type: directory}
+  '@daml.js/signet-vault-v1-0.0.2@file:ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.2':
+    resolution: {directory: ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.2, type: directory}
 
   '@daml.js/splice-api-token-holding-v1-1.0.0@file:ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0':
     resolution: {directory: ts-packages/canton-sig/generated/model/splice-api-token-holding-v1-1.0.0, type: directory}
@@ -2390,7 +2390,7 @@ snapshots:
       '@daml.js/splice-api-token-metadata-v1-1.0.0': file:ts-packages/canton-sig/generated/model/splice-api-token-metadata-v1-1.0.0
       '@mojotech/json-type-validation': 3.1.0
 
-  '@daml.js/signet-vault-v1-0.0.1@file:ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.1':
+  '@daml.js/signet-vault-v1-0.0.2@file:ts-packages/canton-sig/generated/model/signet-vault-v1-0.0.2':
     dependencies:
       '@daml.js/daml-prim-DA-Types-1.0.0': file:ts-packages/canton-sig/generated/model/daml-prim-DA-Types-1.0.0
       '@daml.js/ghc-stdlib-DA-Internal-Template-1.0.0': file:ts-packages/canton-sig/generated/model/ghc-stdlib-DA-Internal-Template-1.0.0

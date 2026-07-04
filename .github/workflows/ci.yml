@@ -67,7 +67,7 @@ jobs:
         # active SDK, which the installer sets to the latest release — producing
         # an OpenAPI spec that mismatches the 3.5.1 codegen and library code.
         working-directory: daml-packages/signet-vault-v1
-        run: dpm sandbox --json-api-port 7575 --dar .daml/dist/signet-vault-v1-0.0.1.dar &
+        run: dpm sandbox --json-api-port 7575 --dar .daml/dist/signet-vault-v1-0.0.2.dar &
 
       - name: Wait for Canton JSON API
         run: |

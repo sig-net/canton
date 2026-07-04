@@ -81,7 +81,7 @@ setupWithKey pubKey = do
 
   vaultCid <- submit operator do
     createCmd Vault with
-      operators = [operator]; sigNetwork
+      operators = [operator]
       evmVaultAddress = sampleVaultAddress
       mpcResponseVerifyKey = pubKey
       vaultId = "test-vault"
@@ -226,11 +226,11 @@ mkSignEvent VaultEnv{operator, requester, sigNetwork, sigNetworkFA} evmTxParams 
 -- Pending deposit/withdrawal anchors on the canonical sample params; only the
 -- requestId varies per test.
 mkPendingDepositWithSignEvent : VaultEnv -> BytesHex -> Script (ContractId SignBidirectionalEvent, ContractId PendingDeposit)
-mkPendingDepositWithSignEvent env@VaultEnv{operator, requester, sigNetwork} requestId = do
+mkPendingDepositWithSignEvent env@VaultEnv{operator, requester} requestId = do
   requestEventCid <- mkSignEvent env sampleEvmType2Params
   pendingCid <- submit operator do
     createCmd PendingDeposit with
-      operators = [operator]; requester; sigNetwork
+      operators = [operator]; requester
       requestId; evmTxParams = sampleEvmType2Params; signEventCid = requestEventCid
   pure (requestEventCid, pendingCid)
 
@@ -238,11 +238,11 @@ mkPendingDeposit : VaultEnv -> BytesHex -> Script (ContractId PendingDeposit)
 mkPendingDeposit env requestId = snd <$> mkPendingDepositWithSignEvent env requestId
 
 mkPendingWithdrawalWithSignEvent : VaultEnv -> BytesHex -> Script (ContractId SignBidirectionalEvent, ContractId PendingWithdrawal)
-mkPendingWithdrawalWithSignEvent env@VaultEnv{operator, requester, sigNetwork} requestId = do
+mkPendingWithdrawalWithSignEvent env@VaultEnv{operator, requester} requestId = do
   requestEventCid <- mkSignEvent env sampleWithdrawalEvmParams
   pendingCid <- submit operator do
     createCmd PendingWithdrawal with
-      operators = [operator]; requester; sigNetwork
+      operators = [operator]; requester
       requestId; evmTxParams = sampleWithdrawalEvmParams
       erc20Address = sampleErc20Address; amount = sampleHoldingAmount
       signEventCid = requestEventCid
@@ -381,14 +381,14 @@ testClaimRejectsBoolFalse = do
 -- the only gate.
 testClaimRejectsPendingOperatorsMismatch : Script ()
 testClaimRejectsPendingOperatorsMismatch = do
-  env@VaultEnv{requester, sigNetwork} <- setupWithKey claimTestPubKey
+  env@VaultEnv{requester} <- setupWithKey claimTestPubKey
 
   signEventCid <- mkSignEvent env sampleEvmType2Params
   evidence <- mkEvidence env claimTestRequestId boolTrueMpcOutput claimTestSignature
 
   forgedPendingCid <- submit requester do
     createCmd PendingDeposit with
-      operators = [requester]; requester; sigNetwork
+      operators = [requester]; requester
       requestId = claimTestRequestId; evmTxParams = sampleEvmType2Params; signEventCid
 
   claimDepositMustFail env forgedPendingCid evidence
@@ -410,12 +410,11 @@ testHoldingRejectsWrongAddressLength = do
 -- Vault rejects ABI address slots whose high 12 bytes are not zero.
 testVaultRejectsDirtyAddressPadding : Script ()
 testVaultRejectsDirtyAddressPadding = do
-  sigNetwork <- allocateParty "SigNetwork"
   operator <- allocateParty "Operator"
 
   submitMustFail operator do
     createCmd Vault with
-      operators = [operator]; sigNetwork
+      operators = [operator]
       evmVaultAddress = dirtyVaultAddress
       mpcResponseVerifyKey = testPubKeyHex
       vaultId = "dirty-address-vault"
@@ -423,12 +422,12 @@ testVaultRejectsDirtyAddressPadding = do
 -- PendingDeposit rejects malformed request ids at the ledger boundary
 testPendingDepositRejectsWrongRequestIdLength : Script ()
 testPendingDepositRejectsWrongRequestIdLength = do
-  env@VaultEnv{sigNetwork, operator, requester} <- setup
+  env@VaultEnv{operator, requester} <- setup
   requestEventCid <- mkSignEvent env sampleEvmType2Params
 
   submitMustFail operator do
     createCmd PendingDeposit with
-      operators = [operator]; requester; sigNetwork
+      operators = [operator]; requester
       requestId = "aa"; evmTxParams = sampleEvmType2Params; signEventCid = requestEventCid
 
 -- requester cannot exercise Signer.Respond (controller is sigNetwork)
@@ -732,14 +731,14 @@ testCompleteWithdrawalRejectsSignatureRespondedRequestIdMismatch = do
 -- mismatch" check is the only gate.
 testCompleteWithdrawalRejectsPendingOperatorsMismatch : Script ()
 testCompleteWithdrawalRejectsPendingOperatorsMismatch = do
-  env@VaultEnv{requester, sigNetwork} <- setupWithKey claimTestPubKey
+  env@VaultEnv{requester} <- setupWithKey claimTestPubKey
 
   signEventCid <- mkSignEvent env sampleWithdrawalEvmParams
   evidence <- mkEvidence env claimTestRequestId errorPrefixMpcOutput refundTestSignature
 
   forgedPendingCid <- submit requester do
     createCmd PendingWithdrawal with
-      operators = [requester]; requester; sigNetwork
+      operators = [requester]; requester
       requestId = claimTestRequestId; evmTxParams = sampleWithdrawalEvmParams
       erc20Address = sampleErc20Address; amount = sampleHoldingAmount
       signEventCid
