@@ -31,7 +31,7 @@ Root keys are NAJ-encoded (`secp256k1:…`); convert with signet.js `normalizeTo
 
 ## 1. Build your consumer against the release DARs — never rebuild ours from source
 
-Download the DARs from the [GitHub release assets](https://github.com/sig-net/canton/releases) (currently `v0.0.1`) and verify them against `SHA256SUMS.txt`. These are **byte-exact the packages vetted on DevNet and testnet**; the release notes list the package-id of each.
+Download the DARs from the [GitHub release assets](https://github.com/sig-net/canton/releases) (currently `v0.0.1`) and verify them against `SHA256SUMS.txt`. These are **byte-exact the packages vetted on DevNet and testnet** (`signet-uint256` is a pure library that only enters vetting via a consumer DAR that depends on it); the release notes list the package-id of each.
 
 > **Why this matters:** a Daml package-id is a hash of the package source. If you rebuild `signet-signer-v1` from a clone of this repo at any commit that differs from the release, you get a _different_ package-id under the _same_ `name`+`version` — and Canton refuses to vet two same-name+version packages with different package-ids (`KNOWN_PACKAGE_VERSION`). Your consumer DAR embeds the dependency's package-id at compile time, so building against the wrong bytes produces a package that can never be vetted next to the deployed one. Always compile against the downloaded release assets.
 
