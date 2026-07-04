@@ -1,6 +1,6 @@
 # signet-vault-v1
 
-ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of the generic [`signet-signer-v1`](../signet-signer-v1/README.md) layer — clients supply EIP-1559 `transfer(address,uint256)` params, the Vault validates the recipient/token/amount shape, hands signing to the Signer, and verifies the returned MPC response signature on-ledger via `secp256k1WithEcdsaOnly` before deposit minting or withdrawal settlement/refund.
+ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of the generic [`signet-signer-v1`](../signet-signer-v1/README.md) layer — clients supply EIP-1559 `transfer(address,uint256)` params, the Vault validates the recipient/token/amount shape, hands signing to the Signer, and verifies the returned MPC response signature on-ledger via `secp256k1WithEcdsaOnly` before deposit minting or withdrawal settlement/refund. It is the worked implementation of the [signer security checklist](../signet-signer-v1/SECURITY.md) (single-use anchors, calldata validation, key pinning, outcome verification).
 
 ## Templates
 
