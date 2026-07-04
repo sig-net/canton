@@ -57,7 +57,7 @@ Every release tag MUST ship the built DARs as GitHub release assets. Integrators
 On every release (after `git tag vX.Y.Z && git push origin vX.Y.Z && gh release create vX.Y.Z --generate-notes`):
 
 1. `dpm build --all` at the release tag.
-2. Stage the 7 signet DARs (`signet-signer-v1`, `signet-vault-v1`, `signet-fee-amulet`, `signet-api-fee-v1`, `signet-abi`, `signet-eip712`, `signet-uint256`) plus the 3 vendored `splice-api-token-*` DARs; `shasum -a 256 *.dar > SHA256SUMS.txt`.
+2. Stage the 6 distributed signet DARs (`signet-signer-v1`, `signet-fee-amulet`, `signet-api-fee-v1`, `signet-abi`, `signet-eip712`, `signet-uint256`) plus the 3 vendored `splice-api-token-*` DARs; `shasum -a 256 *.dar > SHA256SUMS.txt`. The example `signet-vault-v1` is NOT distributed — it is a copy-paste source model; anyone deploying it builds from the release tag. (v0.0.1's assets still include `signet-vault-v1-0.0.1.dar`; kept as history — it matches the deployed 0.0.1 instances.)
 3. `gh release upload vX.Y.Z *.dar SHA256SUMS.txt`.
 4. Append a package-id table to the release notes (main package-id per DAR — read it from `dpm inspect-dar` DALF paths) and state which networks those package-ids are vetted on. Cross-check against `apps/disclosure-api/disclosures.<network>.ts` template ids after deploying.
 

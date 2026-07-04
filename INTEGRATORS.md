@@ -64,7 +64,7 @@ Upload via `POST /v2/dars?vetAllPackages=true` (or `canton-sig`'s `uploadDar`); 
 
 - your consumer DAR (its closure pulls in `signet-signer-v1`, `signet-eip712`, `signet-api-fee-v1`, and the splice token interfaces),
 - `signet-fee-amulet-0.0.1.dar` — the signature-fee charge executes in a subtree your participant confirms,
-- `signet-vault-v1-0.0.2.dar` only if you use the Vault.
+- the example Vault (`signet-vault-v1`) only if you deploy it — it isn't a release asset (it's meant to be copied as source, not consumed as a dependency); build it from the release tag.
 
 As general vetting hygiene: **vet only official packages from trusted sources** — the checksum-verified release assets here, and Splice/token-standard packages from your own validator deployment. Treat vetting anything else like a production deploy approval.
 
