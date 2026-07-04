@@ -23,15 +23,9 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 ## Choices
 
-Both `RequestDeposit` and `RequestWithdrawal` also take the three CC signature-fee args
-(`feeRegistrationCid`, `feeInputs`, `feeExtraArgs`) and forward them to
-`Signer.RequestSignature`, which charges the fee atomically through the registered late-bound
-`FeeCollector`. The requester sources them client-side (see `canton-sig`'s fee helpers) and
-attaches the matching disclosures; if the fee can't settle, `RequestSignature` aborts and nothing
-is created. See [signet-signer-v1 § CC signature fee](../signet-signer-v1/FEE.md).
+Both `RequestDeposit` and `RequestWithdrawal` also take the three CC signature-fee args (`feeRegistrationCid`, `feeInputs`, `feeExtraArgs`) and forward them to `Signer.RequestSignature`, which charges the fee fail-closed — if it can't settle, nothing is created. The requester sources the fee args client-side (see `canton-sig`'s fee helpers) and attaches the matching disclosures. Details: [signet-signer-v1 § CC signature fee](../signet-signer-v1/README.md#cc-signature-fee).
 
-Both choices also pin `caip2Id = "eip155:1"` (test mode — the MPC indexer accepts only that
-caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself targets Sepolia.
+Both choices also pin `caip2Id = "eip155:1"` (test mode — the MPC indexer accepts only that caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself targets Sepolia.
 
 `Vault.RequestDeposit` (controller `requester`):
 
@@ -45,13 +39,13 @@ caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself
 2. Cross-checks operators / requester / `requestId` between pending, `RespondBidirectionalEvent`, and `SignatureRespondedEvent`.
 3. Verifies the MPC outcome signature against `mpcResponseVerifyKey`: `secp256k1WithEcdsaOnly(sigDer, keccak256(requestId ‖ serializedOutput), mpcResponseVerifyKey)`.
 4. Rejects if the output starts with the `deadbeef` error prefix or ABI-decodes to `bool(false)`.
-5. Calls `Consume_RespondBidirectional` / `Consume_SignatureResponded` (the requester lacks `sigNetwork` authority to archive those directly).
-6. Retires the stored `SignBidirectionalEvent` via `Consume_SignBidirectional` (a bare `archive` would lack `sigNetworkFA`'s authority) after the response evidence has been validated and consumed.
+5. Consumes both evidence contracts via `Consume_RespondBidirectional` / `Consume_SignatureResponded`.
+6. Retires the stored `SignBidirectionalEvent` via `Consume_SignBidirectional` after the response evidence has been validated and consumed.
 7. Decodes the amount from `pending.evmTxParams.calldata` slot 1 and creates `Erc20Holding`.
 
 `Vault.RequestWithdrawal` (controller `requester`):
 
-1. Validates the same calldata shape; also checks `evmTxParams.to == Some holding.erc20Address`, the recipient ABI slot equals the supplied `recipientAddress`, and the amount equals `holding.amount`.
+1. Validates the same calldata shape; also checks `holding.owner == requester`, holding operators equal `Vault` operators (sort-equal), `evmTxParams.to == Some holding.erc20Address`, the recipient ABI slot equals the supplied `recipientAddress`, and the amount equals `holding.amount`.
 2. **Archives the holding first** (optimistic debit). If MPC reports failure, `CompleteWithdrawal` recreates it.
 3. Builds `path = "${vaultId},root"` for the shared vault address that receives deposit sweeps and funds withdrawals.
 4. Same atomic `RequestSignature` → `PendingWithdrawal` flow as deposit, including storage of `signEventCid`.
@@ -64,16 +58,16 @@ caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself
 
 The deposit flow mirrors the usual centralized-exchange pattern: a user funds a derived deposit address, the vault sweeps those tokens to the shared vault address, and Canton mints an `Erc20Holding` only after the MPC outcome is verified on-ledger.
 
-1. Derive addresses off-ledger from the MPC root public key with `sender = operatorsHash`.
+1. Derive addresses off-ledger from the MPC root public key with `sender = operatorsHash` (KDF formula and tooling: [signet-signer-v1 § Quickstart](../signet-signer-v1/README.md#quickstart) step 2).
    - Deposit address path: `${vaultId},${requester},${userPath}`.
    - Vault sweep address path: `${vaultId},root`; store this as `Vault.evmVaultAddress` in ABI address-slot form.
 2. The user funds the deposit address on the destination chain with the ERC-20 token and enough native gas for the sweep.
 3. The user exercises `Vault.RequestDeposit`, passing EIP-1559 params for `transfer(vaultAddress, amount)` against the ERC-20 contract.
-4. `RequestDeposit` validates calldata, exercises `Signer.RequestSignature`, fetches the resulting `SignBidirectionalEvent`, computes `requestId`, and creates `PendingDeposit` with both `requestId` and `signEventCid`.
+4. `RequestDeposit` validates the calldata, emits `SignBidirectionalEvent` via `Signer.RequestSignature`, and creates `PendingDeposit` (step-by-step in [Choices](#choices)).
 5. The MPC service observes `SignBidirectionalEvent`, signs the request-specific digest with the child key for the request path, and creates `SignatureRespondedEvent`.
 6. The client reads `SignatureRespondedEvent`, reconstructs the signed EIP-1559 transaction, and submits it to the destination chain.
 7. After the receipt is finalized, the MPC service publishes `RespondBidirectionalEvent` with `serializedOutput` and a response signature made by the response-verification child key.
-8. The user exercises `Vault.ClaimDeposit`. The choice archives `PendingDeposit`, cross-checks both MPC evidence contracts, verifies `RespondBidirectionalEvent.signature` against `mpcResponseVerifyKey`, rejects failures or `bool(false)`, consumes both evidence contracts, retires the original `SignBidirectionalEvent` via `Consume_SignBidirectional`, and creates `Erc20Holding`.
+8. The user exercises `Vault.ClaimDeposit`, which archives the pending, validates the MPC evidence, and mints the `Erc20Holding` (step-by-step in [Choices](#choices)).
 
 ```text
   Sender / requester              Vault (operators)               Signer (sigNetwork)             MPC service                     Destination chain
@@ -130,13 +124,10 @@ The deposit flow mirrors the usual centralized-exchange pattern: a user funds a 
 The withdrawal flow spends a user's Canton holding by signing an ERC-20 transfer from the shared vault address. It uses optimistic debit: the holding is archived before signing, then recreated only if the destination-chain outcome reports failure.
 
 1. The user exercises `Vault.RequestWithdrawal` with an owned `Erc20Holding`, a recipient ABI address slot, and EIP-1559 params for `transfer(recipient, amount)`.
-2. `RequestWithdrawal` verifies holding owner, operator set, token address, amount, recipient, calldata shape, and token contract recipient.
-3. The choice archives the holding, then exercises `Signer.RequestSignature`, fetches the `SignBidirectionalEvent`, computes `requestId`, and creates `PendingWithdrawal` with both `requestId` and `signEventCid`.
-4. The signing path is `${vaultId},root`, so the signed transaction spends from the shared vault address.
-5. The MPC service and client follow the same response flow as deposit: `SignatureRespondedEvent` carries the request signature, the client submits the signed transaction, and `RespondBidirectionalEvent` carries the verified outcome bytes.
-6. The user exercises `Vault.CompleteWithdrawal`. The choice archives `PendingWithdrawal`, cross-checks both MPC evidence contracts, verifies the response signature against `mpcResponseVerifyKey`, consumes both evidence contracts, and retires the original `SignBidirectionalEvent` via `Consume_SignBidirectional`.
-7. On success (`serializedOutput` does not start with `deadbeef` and ABI-decodes to `bool(true)`), the withdrawal is final and the choice returns `None`.
-8. On failure or `bool(false)`, the choice recreates the archived `Erc20Holding` with the original owner, token address, and amount, then returns `Some refundCid`.
+2. `RequestWithdrawal` validates the holding and calldata, archives the holding (optimistic debit), and creates `PendingWithdrawal` (step-by-step in [Choices](#choices)); the signing path is `${vaultId},root`, so the signed transaction spends from the shared vault address.
+3. The MPC service and client follow the same response flow as deposit: `SignatureRespondedEvent` carries the request signature, the client submits the signed transaction, and `RespondBidirectionalEvent` carries the verified outcome bytes.
+4. The user exercises `Vault.CompleteWithdrawal`, which validates the MPC evidence the same way as `ClaimDeposit` (step-by-step in [Choices](#choices)).
+5. On success the withdrawal is final and the choice returns `None`; on failure the choice recreates the archived `Erc20Holding` and returns `Some refundCid` (outcome encodings in [MPC outcome bytes](#mpc-outcome-bytes)).
 
 ```text
   Sender / requester              Vault (operators)               Signer (sigNetwork)             MPC service                     Destination chain
@@ -220,44 +211,3 @@ const args = encodeAbiParameters(parseAbiParameters("address, uint256"), [
 ]).slice(2); // drop 0x for Canton-format hex
 const calldata = `a9059cbb${args}`;
 ```
-
-## Security invariants
-
-- `sigNetwork` is **not** an observer of `Erc20Holding`. It can observe the vault and pending MPC workflow contracts, but not active per-owner holding balances.
-- Both Pending\* lifecycle templates are signed only by `operators` — `sigNetwork` cannot fabricate a pending claim.
-- `Vault` and `VaultProposal` reject any `evmVaultAddress` whose high 12 bytes are non-zero (`isAbiAddressSlot`); same check on withdrawal `recipientAddress`. Prevents accidental dirty-padding from changing the recipient on EVM.
-- `RequestDeposit` requires `transfer(address,uint256)` with recipient = `evmVaultAddress` and exactly two ABI slots. Anything else aborts before signing.
-- `RequestWithdrawal` requires `transfer(address,uint256)` to the holding's token address with recipient = supplied `recipientAddress` and amount = `holding.amount` exactly.
-- `Erc20Holding` operators must equal `Vault` operators (sort-equal) on every withdrawal — prevents using a holding minted by a different operator set.
-- `ClaimDeposit` / `CompleteWithdrawal` archive the Pending\* contract **before** any other validation as the single-use guard, then verify the MPC signature on the outcome bytes before minting, refunding, or finalizing. Replay of the same `(pendingCid, evidence pair)` fails because the pending is already archived.
-- Pending\* contracts store the original `signEventCid`; successful claim/completion retires that `SignBidirectionalEvent` via `Consume_SignBidirectional` after the response evidence is validated and consumed. The event stays active while the MPC still needs it for `Respond` / `RespondBidirectional`, then is removed to avoid stale request events.
-- Per-vault key derivation: `path` always includes `vaultId`, so two vaults sharing the same operator set still derive distinct EVM keys. The Signer cannot enforce this — it's the consumer's job, and `signet-vault-v1` does it for you by always prefixing `path` with `vaultId`.
-
-## Usage
-
-```yaml
-# daml.yaml
-data-dependencies:
-  - ../signet-vault-v1/.daml/dist/signet-vault-v1-0.0.1.dar
-  - ../signet-signer-v1/.daml/dist/signet-signer-v1-0.0.1.dar
-  - ../signet-abi/.daml/dist/signet-abi-0.0.1.dar
-  - ../signet-eip712/.daml/dist/signet-eip712-0.0.1.dar
-  - ../signet-api-fee-v1/.daml/dist/signet-api-fee-v1-1.0.0.dar
-  - ../vendor/splice-api-token-metadata-v1-1.0.0.dar
-  - ../vendor/splice-api-token-holding-v1-1.0.0.dar
-build-options:
-  - -Wno-crypto-text-is-alpha
-```
-
-```haskell
-import Erc20Vault
-  ( Vault, VaultProposal, Erc20Holding, PendingDeposit, PendingWithdrawal
-  , RequestDeposit(..), ClaimDeposit(..)
-  , RequestWithdrawal(..), CompleteWithdrawal(..)
-  , SignVault(..)
-  )
-import Signer (Signer, SignBidirectionalEvent, SignatureRespondedEvent, RespondBidirectionalEvent)
-import EvmTypes (EvmType2TransactionParams(..))
-```
-
-A TypeScript end-to-end run-through of the success paths (deposit, claim, withdrawal) lives in `test/src/test/devnet-e2e.test.ts`, against a Vault pre-deployed by `test/src/scripts/deploy.ts` (the e2e fetches it from the disclosure endpoint).
