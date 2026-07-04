@@ -47,7 +47,7 @@ build-options:
 
 Daml imports:
 
-```daml
+```haskell
 import DA.Crypto.Text (secp256k1WithEcdsaOnly)
 import DA.List (sort)
 
@@ -96,7 +96,7 @@ A single signing request, end-to-end. All steps run inside one Daml transaction 
 
 Inside a consumer choice body (which has `operators` signatory + `requester` controller authority):
 
-```daml
+```haskell
 nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, ContractId MyAnchor)
   with
     requester    : Party
@@ -167,7 +167,7 @@ Both children derive from the MPC root via the Canton KDF (see [Quickstart](#qui
 
 Once both events are visible (poll via `/v2/state/active-contracts` for the template ids, or subscribe to `/v2/updates` for streaming), in a new transaction:
 
-```daml
+```haskell
 nonconsuming choice MyDomainClaim : ...
   with
     requester                    : Party
@@ -390,7 +390,7 @@ Outcome signature evidence. Created by `Signer.RespondBidirectional`, signed by 
 
 ### `EvmTypes.daml`
 
-```daml
+```haskell
 data EvmAccessListEntry = EvmAccessListEntry with
     address     : BytesHex          -- 20 bytes
     storageKeys : [BytesHex]        -- each 32 bytes
@@ -405,7 +405,7 @@ data EvmType2TransactionParams = EvmType2TransactionParams with
 
 ### `TxParams.daml`
 
-```daml
+```haskell
 data TxParams = EvmType2TxParams EvmType2TransactionParams
 ```
 
@@ -413,7 +413,7 @@ Single constructor today; `BtcTxParams` / `SolTxParams` slot in the future.
 
 ### `Signer.daml`
 
-```daml
+```haskell
 data EcdsaSigData = EcdsaSigData with
     der        : SignatureHex   -- DER-encoded (r, s)
     recoveryId : Int            -- 0 or 1

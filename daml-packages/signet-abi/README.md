@@ -13,7 +13,7 @@ The library uses two addressing modes:
 
 Typical pattern: read an offset pointer via `abiReadOffset` (slot index in), then pass the returned byte offset to a dynamic decoder:
 
-```daml
+```haskell
 let offset = abiReadOffset hex 1       -- slot index → byte offset
 let name   = abiDecodeString hex offset -- byte offset → decoded value
 ```
@@ -83,7 +83,7 @@ data-dependencies:
   - ../signet-abi/.daml/dist/signet-abi-0.0.1.dar
 ```
 
-```daml
+```haskell
 import Abi (abiStripSelector, abiDecodeAddress, abiDecodeUint, abiDecodeBool)
 
 -- Decode transfer(address,uint256) calldata

@@ -22,7 +22,7 @@ Used by [`signet-signer-v1`](../signet-signer-v1/README.md)'s `RequestId.daml`. 
 
 `computeRequestId` in `signet-signer-v1/daml/RequestId.daml` is just:
 
-```daml
+```haskell
 keccak256 $
      eip712EncodeString  sender                      -- 32B
   <> hashTxParams        txParams                    -- 32B (per-tx-type keccak)
@@ -67,7 +67,7 @@ build-options:
   - -Wno-crypto-text-is-alpha
 ```
 
-```daml
+```haskell
 import DA.Crypto.Text (BytesHex, keccak256)
 import Eip712 (eip712EncodeString, eip712EncodeUint256, chainIdToDecimalText)
 

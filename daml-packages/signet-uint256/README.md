@@ -56,7 +56,7 @@ data-dependencies:
   - ../signet-uint256/.daml/dist/signet-uint256-0.0.1.dar
 ```
 
-```daml
+```haskell
 import UInt256 (uint256FromHex, uint256Add, uint256ToHex)
 import HexCompare (hexGtUint)
 

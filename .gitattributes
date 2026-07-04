@@ -1,0 +1,7 @@
+# GitHub Linguist ships no Daml grammar, so .daml files render unhighlighted on GitHub.
+# Daml is a Haskell dialect — classify and syntax-highlight Daml source as Haskell.
+# (This also counts these files as Haskell in the repository language statistics.)
+*.daml linguist-language=Haskell
+
+# Not Daml: a Dockerfile whose filename happens to end in .daml. Keep it as a Dockerfile.
+.github/docker/Dockerfile.daml linguist-language=Dockerfile
