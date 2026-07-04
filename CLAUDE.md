@@ -50,6 +50,19 @@ For a local loop (an MPC node against a local sandbox), see `TEST_LOCALLY.md` (R
 
 The per-network MPC root key comes from signet.js `ROOT_PUBLIC_KEYS` (`TESTNET_DEV` → devnet, `TESTNET` → testnet) and is baked into the Vault's derived addresses, so it must match the cluster that will watch the contracts. DevNet and testnet are both deployed. `apps/disclosure-api` serves the disclosures split per network (`/api/devnet`, `/api/testnet`; `/` aliases devnet). `deploy-vault.ts` is a separate vault-only deploy.
 
+## Releasing (DAR assets are mandatory)
+
+Every release tag MUST ship the built DARs as GitHub release assets. Integrators compile their consumer packages against these exact files (see `INTEGRATORS.md`): a DAR rebuilt from any other commit produces a different package-id under the same `name`+`version`, and Canton refuses to vet two same-name+version packages with different package-ids — so without published assets, integrator builds silently diverge from the deployed packages the moment `main` moves past the deploy commit.
+
+On every release (after `git tag vX.Y.Z && git push origin vX.Y.Z && gh release create vX.Y.Z --generate-notes`):
+
+1. `dpm build --all` at the release tag.
+2. Stage the 7 signet DARs (`signet-signer-v1`, `signet-vault-v1`, `signet-fee-amulet`, `signet-api-fee-v1`, `signet-abi`, `signet-eip712`, `signet-uint256`) plus the 3 vendored `splice-api-token-*` DARs; `shasum -a 256 *.dar > SHA256SUMS.txt`.
+3. `gh release upload vX.Y.Z *.dar SHA256SUMS.txt`.
+4. Append a package-id table to the release notes (main package-id per DAR — read it from `dpm inspect-dar` DALF paths) and state which networks those package-ids are vetted on. Cross-check against `apps/disclosure-api/disclosures.<network>.ts` template ids after deploying.
+
+v0.0.1 has this done (assets + package-id manifest, matching DevNet + testnet).
+
 ## Canton node / network config (sig-net org)
 
 The Canton node this repo targets is provisioned in **other sig-net repos**, not here. Query them with `gh` when you need network config — the Splice version, participant/validator settings, or auth:
