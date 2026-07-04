@@ -301,7 +301,7 @@ With `withdrawFromAave = true`, the contract burns shares, calls
 
 ### New TxSource Type
 
-```daml
+```haskell
 -- new type — current code anchors flows in separate PendingDeposit/PendingWithdrawal templates
 data TxSource
   = DepositSource (ContractId DepositAuthorization)
@@ -321,7 +321,7 @@ No `AavePosition` template. Both USDC and stataUSDC are tracked as
 Generic ERC-20 approval — reusable across Aave, Uniswap, and future
 protocol integrations.
 
-```daml
+```haskell
 nonconsuming choice RequestEvmApprove : ContractId PendingEvmTx
   with
     token       : BytesHex    -- ERC-20 contract address
@@ -353,7 +353,7 @@ nonconsuming choice RequestEvmApprove : ContractId PendingEvmTx
 
 #### ClaimEvmApprove (nonconsuming)
 
-```daml
+```haskell
 nonconsuming choice ClaimEvmApprove : ()
   with
     requester                    : Party
@@ -386,7 +386,7 @@ nonconsuming choice ClaimEvmApprove : ()
 Uses the user's deposit path (not "root") so each user has their own Aave
 position via their derived address.
 
-```daml
+```haskell
 nonconsuming choice RequestAaveSupply : ContractId PendingEvmTx
   with
     requester   : Party
@@ -433,7 +433,7 @@ nonconsuming choice RequestAaveSupply : ContractId PendingEvmTx
 Creates `Erc20Holding(stataUSDC, sharesAmount)` — balance stays correct
 forever since shares don't rebase.
 
-```daml
+```haskell
 nonconsuming choice ClaimAaveSupply : ContractId Erc20Holding
   with
     requester                    : Party
@@ -473,7 +473,7 @@ nonconsuming choice ClaimAaveSupply : ContractId Erc20Holding
 
 Consumes `Erc20Holding(stataUSDC)`, redeems all shares.
 
-```daml
+```haskell
 nonconsuming choice RequestAaveWithdraw : ContractId PendingEvmTx
   with
     requester   : Party
@@ -514,7 +514,7 @@ nonconsuming choice RequestAaveWithdraw : ContractId PendingEvmTx
 
 #### CompleteAaveWithdraw (nonconsuming)
 
-```daml
+```haskell
 nonconsuming choice CompleteAaveWithdraw
     : Optional (ContractId Erc20Holding)
   with
@@ -691,7 +691,7 @@ Canton knowing.
 
 Add an `Erc20Approval` template that records active approvals on the ledger.
 
-```daml
+```haskell
 template Erc20Approval
   with
     issuer       : Party
@@ -943,7 +943,7 @@ Transfers any ERC-20 from the user's DeFi address to the vault. Identical
 to `RequestDeposit` but for arbitrary tokens (not just the original
 deposit token).
 
-```daml
+```haskell
 nonconsuming choice RequestCustodySweep : ContractId PendingEvmTx
   with
     requester    : Party

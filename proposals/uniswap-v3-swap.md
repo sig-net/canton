@@ -122,7 +122,7 @@ matching standard ABI encoding for tuple parameters.
 
 ### New TxSource Type
 
-```daml
+```haskell
 -- new type — current code anchors flows in separate PendingDeposit/PendingWithdrawal templates
 data TxSource
   = DepositSource (ContractId DepositAuthorization)
@@ -140,7 +140,7 @@ data TxSource
 
 #### RequestUniswapSwap (nonconsuming)
 
-```daml
+```haskell
 nonconsuming choice RequestUniswapSwap : ContractId PendingEvmTx
   with
     requester        : Party
@@ -192,7 +192,7 @@ nonconsuming choice RequestUniswapSwap : ContractId PendingEvmTx
 
 #### ClaimUniswapSwap (nonconsuming)
 
-```daml
+```haskell
 nonconsuming choice ClaimUniswapSwap
     : Optional (ContractId Erc20Holding)
   with

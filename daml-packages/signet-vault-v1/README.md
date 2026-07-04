@@ -249,7 +249,7 @@ build-options:
   - -Wno-crypto-text-is-alpha
 ```
 
-```daml
+```haskell
 import Erc20Vault
   ( Vault, VaultProposal, Erc20Holding, PendingDeposit, PendingWithdrawal
   , RequestDeposit(..), ClaimDeposit(..)
