@@ -25,7 +25,7 @@ ERC-20 custody on Canton, signed by an MPC network. Domain-specific consumer of 
 
 Both `RequestDeposit` and `RequestWithdrawal` also take the three CC signature-fee args (`feeRegistrationCid`, `feeInputs`, `feeExtraArgs`) and forward them to `Signer.RequestSignature`, which charges the fee fail-closed — if it can't settle, nothing is created. The requester sources the fee args client-side (see `canton-sig`'s fee helpers) and attaches the matching disclosures. Details: [signet-signer-v1 § CC signature fee](../signet-signer-v1/README.md#cc-signature-fee).
 
-Both choices also pin `caip2Id = "eip155:1"` (test mode — the MPC indexer accepts only that caip2). caip2 is decoupled from the signed `chainId`, so on DevNet the tx itself targets Sepolia.
+Both choices also pin `caip2Id = "eip155:1"` (test mode — the MPC indexer accepts only that caip2). caip2 is decoupled from the signed `chainId`, so in test deployments the tx itself targets Sepolia.
 
 `Vault.RequestDeposit` (controller `requester`):
 

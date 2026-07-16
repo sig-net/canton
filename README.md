@@ -10,11 +10,11 @@ MPC-based ERC-20 custody on Canton. Daml smart contracts manage vault state (dep
 | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Integrating the Signer into a new Daml domain**          | [`daml-packages/signet-signer-v1/README.md`](daml-packages/signet-signer-v1/README.md) — authority model + lifecycle; full API in [`API.md`](daml-packages/signet-signer-v1/API.md), checklist in [`SECURITY.md`](daml-packages/signet-signer-v1/SECURITY.md) |
 | **Looking for a worked example to model your consumer on** | [`daml-packages/signet-vault-v1/README.md`](daml-packages/signet-vault-v1/README.md) — the complete example consumer (ERC-20 custody): templates, choices, lifecycles, calldata shape                                                                         |
-| **Deploying your consumer from your own Canton node**      | [`INTEGRATORS.md`](INTEGRATORS.md) — release DARs + package-id rules, vetting, client wiring, DevNet/TestNet go-live, checklist                                                                                                                               |
+| **Deploying your consumer from your own Canton node**      | [`INTEGRATORS.md`](INTEGRATORS.md) — release DARs + package-id rules, vetting, client wiring, TestNet go-live, checklist                                                                                                                                      |
 | **Building a TypeScript client / 3rd-party integration**   | [`ts-packages/canton-sig/README.md`](ts-packages/canton-sig/README.md) — `CantonClient` + crypto + EVM tx helpers                                                                                                                                             |
 | **Charging or administering the CC signature fee**         | [`daml-packages/signet-signer-v1/FEE.md`](daml-packages/signet-signer-v1/FEE.md) — collector model, fee endpoint, upgrade rules, admin runbook, security model                                                                                                |
 
-For an executable end-to-end flow: `test/src/test/devnet-e2e.test.ts` runs deposit + withdraw against the **Canton DevNet, the MPC, and the EVM chain** — the canonical worked example of disclosed-contract wiring, `RequestDeposit`/`RequestWithdrawal` arguments, signed-tx broadcast, and `ClaimDeposit`/`CompleteWithdrawal`. It is gated behind `MPC_CANTON_LIVE_MUTATE=1` (it spends funds). To exercise the flow against a local sandbox + an MPC instead, see [`TEST_LOCALLY.md`](TEST_LOCALLY.md).
+For an executable end-to-end flow: the live e2e test in `test/src/test/` runs deposit + withdraw against a **live Canton network, the MPC, and the EVM chain** — the canonical worked example of disclosed-contract wiring, `RequestDeposit`/`RequestWithdrawal` arguments, signed-tx broadcast, and `ClaimDeposit`/`CompleteWithdrawal`. It is gated behind `MPC_CANTON_LIVE_MUTATE=1` (it spends funds). To exercise the flow against a local sandbox + an MPC instead, see [`TEST_LOCALLY.md`](TEST_LOCALLY.md).
 
 ## Architecture
 
@@ -40,7 +40,7 @@ Per-package details live in each package's README. Earlier design notes under `p
 | Node.js        | 22+     | [nodejs.org](https://nodejs.org/)                                 |
 | pnpm           | 10+     | `corepack enable && corepack prepare pnpm@latest --activate`      |
 
-After installing DPM, make sure `~/.dpm/bin` is on your `PATH`. The DevNet e2e test reads its `MPC_CANTON_*` + funding configuration from `test/.env`; see `test/.env.example` for all variables.
+After installing DPM, make sure `~/.dpm/bin` is on your `PATH`. The live e2e test reads its `MPC_CANTON_*` + funding configuration from `test/.env`; see `test/.env.example` for all variables.
 
 ## Quick Start
 
@@ -54,10 +54,10 @@ pnpm bootstrap     # dpm build --all + Daml codegen + pnpm install
 
 ```bash
 cd test
-pnpm test          # runs the test/ Vitest suite (the DevNet e2e auto-skips unless configured)
+pnpm test          # runs the test/ Vitest suite (the live e2e auto-skips unless configured)
 ```
 
-The DevNet e2e (`src/test/devnet-e2e.test.ts`) runs only when `test/.env` is filled in and `MPC_CANTON_LIVE_MUTATE=1` — see [DevNet E2E Test](#devnet-e2e-test). For a local sandbox driven by an MPC node, see [`TEST_LOCALLY.md`](TEST_LOCALLY.md).
+The live e2e (in `src/test/`) runs only when `test/.env` is filled in and `MPC_CANTON_LIVE_MUTATE=1` — see [Live E2E Test](#live-e2e-test). For a local sandbox driven by an MPC node, see [`TEST_LOCALLY.md`](TEST_LOCALLY.md).
 
 > `pnpm codegen:api` regenerates the OpenAPI types from a Canton JSON API on `:7575`. Point it at a local ledger spun up by the Rust harness in [`TEST_LOCALLY.md`](TEST_LOCALLY.md), or any reachable ledger. `pnpm generate` (clean + DAR + codegen + install) needs such a ledger up for the OpenAPI step.
 
@@ -80,11 +80,11 @@ These don't need a ledger:
 pnpm -r --filter='@canton/*' --filter='canton-sig' run test
 ```
 
-## DevNet E2E Test
+## Live E2E Test
 
-`test/src/test/devnet-e2e.test.ts` exercises the full deposit + withdraw lifecycle against the live Canton DevNet, the MPC cluster, and a Sepolia EVM node, as a pure client.
+The live e2e test (in `test/src/test/`) exercises the full deposit + withdraw lifecycle against a live Canton network, the MPC cluster, and a Sepolia EVM node, as a pure client.
 
-Because it mutates the live ledger and spends DevNet funds, it runs only when the `MPC_CANTON_*` + funding env is present **and** `MPC_CANTON_LIVE_MUTATE=1`. Otherwise the suite skips it.
+Because it mutates the live ledger and spends funds, it runs only when the `MPC_CANTON_*` + funding env is present **and** `MPC_CANTON_LIVE_MUTATE=1`. Otherwise the suite skips it.
 
 ### Setup
 
@@ -93,9 +93,9 @@ cd test
 cp .env.example .env
 ```
 
-Fill in the `MPC_CANTON_*` values (DevNet JSON API URL, OIDC credentials, party id, the disclosure endpoint URL — the e2e fetches the Signer + Vault from it — the MPC root public key, and, for paid fee mode, the CC registry URL), plus `MPC_CANTON_ETH_RPC_URL` (the DevNet EVM node) and `FAUCET_PRIVATE_KEY` (funds the derived deposit/vault addresses). See `test/.env.example` for the full list.
+Fill in the `MPC_CANTON_*` values (the network's JSON API URL, OIDC credentials, party id, the disclosure endpoint URL — the e2e fetches the Signer + Vault from it — the MPC root public key, and, for paid fee mode, the CC registry URL), plus `MPC_CANTON_ETH_RPC_URL` (the EVM node the MPC's indexer watches) and `FAUCET_PRIVATE_KEY` (funds the derived deposit/vault addresses). See `test/.env.example` for the full list.
 
-> The Vault hardcodes `caip2 = eip155:1` (test mode); the MPC accepts only that caip2. caip2 is decoupled from the EVM chainId, so the test signs with the **Sepolia chainId (11155111)** and broadcasts to `MPC_CANTON_ETH_RPC_URL`, which the MPC's `eip155:1` indexer watches. This split is a Sepolia-devnet workaround — on mainnet it's unnecessary, since the chain is genuinely `eip155:1`.
+> The Vault hardcodes `caip2 = eip155:1` (test mode); the MPC accepts only that caip2. caip2 is decoupled from the EVM chainId, so the test signs with the **Sepolia chainId (11155111)** and broadcasts to `MPC_CANTON_ETH_RPC_URL`, which the MPC's `eip155:1` indexer watches. This split is a test-mode workaround — on mainnet it's unnecessary, since the chain is genuinely `eip155:1`.
 
 ### Run
 
@@ -122,6 +122,6 @@ From the repo root:
 
 From `test/`:
 
-| Script      | Description                                                                                       |
-| ----------- | ------------------------------------------------------------------------------------------------- |
-| `pnpm test` | Run the test/ Vitest suite; the DevNet e2e runs only when configured + `MPC_CANTON_LIVE_MUTATE=1` |
+| Script      | Description                                                                                     |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| `pnpm test` | Run the test/ Vitest suite; the live e2e runs only when configured + `MPC_CANTON_LIVE_MUTATE=1` |

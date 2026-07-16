@@ -7,7 +7,7 @@ this is the deploy + keep-alive guide. Everything here is `sigNetworkFA`-side; t
 needs no fee setup._
 
 > **Status:** written while the Featured-App application is in flight. The `FeaturedAppRight` section
-> is "what to do once granted"; until then, self-feature on **DevNet** to exercise the same paths.
+> is "what to do once granted"; until then, **self-feature** on a network that allows it to exercise the same paths.
 
 ---
 
@@ -46,7 +46,7 @@ Your three inflows:
 **create the first `TransferPreapproval`** (~$1/yr, burned — §2). Sources: your first validator rewards
 after onboarding, a sponsor seeding your wallet, or moving CC in OTC. Note: CC bought on an exchange or
 held as a bridged token is **not** native on-ledger CC — it must reach your Canton wallet as real
-`Amulet`/`Holding` contracts to be usable. **There is no MainNet faucet** (DevNet/TestNet only).
+`Amulet`/`Holding` contracts to be usable. **There is no MainNet faucet** (test networks only).
 
 ---
 
@@ -96,8 +96,8 @@ fails closed for everyone.
 ## 3. `FeaturedAppRight` — you're applying now
 
 **Getting it.** Fill in the featured-app application form → the **GSF Tokenomics Committee** reviews and,
-if approved, your provider party gets a `FeaturedAppRight` contract. For testing _now_, **self-feature on
-DevNet** to run the exact same reward paths.
+if approved, your provider party gets a `FeaturedAppRight` contract. For testing _now_, **self-feature** (on a
+network that allows it) to run the exact same reward paths.
 
 **Wiring it up (once granted):**
 
@@ -117,9 +117,9 @@ DevNet** to run the exact same reward paths.
 > **Verify before relying on reward capture (open item):** the current charge builds the transfer with
 > `meta = emptyMetadata` (`Signet.Fee.Amulet`) and the client sets no explicit app-reward beneficiary
 > (`canton-sig/src/fee.ts`). So reward attribution currently rests on `sigNetworkFA` being the
-> **preapproval provider + featured**, not on explicit beneficiary plumbing. Confirm on DevNet that a
-> preapproval-settled fee transfer actually produces an `AppRewardCoupon` for `sigNetworkFA`; if not,
-> add explicit attribution.
+> **preapproval provider + featured**, not on explicit beneficiary plumbing. Confirm on a self-featured
+> test deployment that a preapproval-settled fee transfer actually produces an `AppRewardCoupon` for
+> `sigNetworkFA`; if not, add explicit attribution.
 > **Roadmap caveat:** `FEE.md` notes featured-app capture is "a ~$1 `AppRewardCoupon` per featured
 > transfer until **CIP-0104 Increment 4** cuts over; traffic-based afterwards." The CIP-0104 spec
 > defines that increment rollout; track its MainNet rollout status via GSF, because it changes how
@@ -133,7 +133,7 @@ DevNet** to run the exact same reward paths.
 
 - [ ] Validator live on MainNet (sponsor secured, egress IP allowlisted, OIDC configured, wallet UI reachable).
 - [ ] `sigNetworkFA` wallet funded with bootstrap CC (§1).
-- [ ] `FeaturedAppRight` granted (or DevNet self-feature) and wired (§3).
+- [ ] `FeaturedAppRight` granted (or self-featured where allowed) and wired (§3).
 - [ ] `feeReceiver` `TransferPreapproval` **live**, provider chosen for auto-renew (§2).
 - [ ] Create, as `sigNetworkFA`: `CcFeeCollector`, its `FeeCollectorRegistration`, the first `FeePriceConfig`.
 - [ ] Fee endpoint serving `POST /fee/v1/collector` (the `{registration, collector, priceConfig}` + context envelope).

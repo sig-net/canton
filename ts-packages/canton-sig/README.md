@@ -16,7 +16,7 @@ pnpm add canton-sig viem @noble/curves
 You will receive:
 
 1. The `Signer` and `Vault` contract IDs (the MPC operator hosts both).
-2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`. A requester is **not** a stakeholder of the `sigNetwork`-co-signed `Signer` (nor of the `sigNetworkFA`-signed fee contracts), so it cannot read them from its own ACS; it fetches the envelopes from the operator's disclosure endpoint. That endpoint (`apps/disclosure-api`) is public, read-only, and split per network: DevNet `GET https://disclosure-api.vercel.app` (alias of `/api/devnet`), testnet `GET https://disclosure-api.vercel.app/api/testnet`, each returning `{ network, signer, vault, fee }`. Use its `signer` and `vault`; the `fee` blobs are a deploy-time snapshot of that network, and because `FeePriceConfig` reprices, production must resolve the fee context **live** as the fee admin (`getFeeCollectorContext`, step 4 below).
+2. Disclosed-contract envelopes for `Signer` and `Vault` — pass them on every exercise via `disclosedContracts`. A requester is **not** a stakeholder of the `sigNetwork`-co-signed `Signer` (nor of the `sigNetworkFA`-signed fee contracts), so it cannot read them from its own ACS; it fetches the envelopes from the operator's disclosure endpoint. That endpoint (`apps/disclosure-api`) is public, read-only, and split per network (testnet: `GET https://disclosure-api.vercel.app/api/testnet`), each route returning `{ network, signer, vault, fee }`. Use its `signer` and `vault`; the `fee` blobs are a deploy-time snapshot of that network, and because `FeePriceConfig` reprices, production must resolve the fee context **live** as the fee admin (`getFeeCollectorContext`, step 4 below).
 3. The MPC **root** secp256k1 public key (uncompressed, hex). Two children are derived from it via the Canton KDF (`ε = keccak256("sig.network v2.0.0 epsilon derivation:canton:global:{operatorsHash}:{path}")`, child = `rootPub + ε·G`):
    - The **EVM child** for the deposit / sweep address (path = `${vaultId},${requester},${userPath}` for deposits, `${vaultId},root` for the sweep). Computed via `deriveDepositAddress`.
    - The **response-verification child** for outcome verification (KDF input `sender = operatorsHash`, constant `path = "canton response key"`, stored on `Vault.mpcResponseVerifyKey`). The Vault operator computes this when creating the Vault via `deriveResponseVerificationPublicKey` + `toSpkiPublicKey` — the integrator can recompute and assert equality before trusting the contract.
@@ -52,9 +52,9 @@ const canton = new CantonClient("http://localhost:7575");
 
 // 1. Inputs you receive at integration time
 // Fetch the Signer + Vault disclosures from the operator's disclosure endpoint — you
-// can't read the sigNetwork-only Signer from your own ACS (DevNet endpoint shown).
+// can't read the sigNetwork-only Signer from your own ACS (testnet endpoint shown).
 const { signer: signerDisclosure, vault: vaultDisclosure } = (await (
-  await fetch("https://disclosure-api.vercel.app")
+  await fetch("https://disclosure-api.vercel.app/api/testnet")
 ).json()) as { signer: DisclosedContract; vault: DisclosedContract };
 const signerCid = signerDisclosure.contractId!;
 const vaultCid = vaultDisclosure.contractId!;
@@ -179,7 +179,7 @@ const claimTx = await canton.exerciseChoice(
 const holding = findCreated(claimTx.transaction.events, "Erc20Holding");
 ```
 
-`pollForContract` is whatever you implement on top of `canton.getActiveContracts`. The full runnable version (faucet funding, gas fetch, fee assembly, polling, withdrawal) is `test/src/test/devnet-e2e.test.ts` in this repo and is the recommended starting point; it runs as a pure client against a pre-provisioned party and the deployed Vault.
+`pollForContract` is whatever you implement on top of `canton.getActiveContracts`. The full runnable version (faucet funding, gas fetch, fee assembly, polling, withdrawal) is the live e2e test (in `test/src/test/`) in this repo and is the recommended starting point; it runs as a pure client against a pre-provisioned party and the deployed Vault.
 
 ## Security caveats for integrators
 
@@ -200,7 +200,7 @@ Canton-format hex is bare lowercase hex, no `0x` prefix; `""` represents empty b
 `requestId` is `computeRequestId(sender, txParams, caip2Id, keyVersion, path, algo, dest, params)`:
 
 - `sender` — the operatorsHash. Set on-ledger by `Signer.RequestSignature`; never user-supplied. Mirror it off-chain with the snippet above to verify.
-- `caip2Id` — must equal whatever the Vault used, **not** necessarily the signed chainId. The test-mode Vault hardcodes `"eip155:1"` while signing for Sepolia (`11155111`) — a devnet workaround; on mainnet the chain is genuinely `eip155:1`, so `chainIdHexToCaip2(evmTxParams.chainId)` matches and no hardcode is needed. Use whichever the Vault uses, or the recomputed `requestId` won't match.
+- `caip2Id` — must equal whatever the Vault used, **not** necessarily the signed chainId. The test-mode Vault hardcodes `"eip155:1"` while signing for Sepolia (`11155111`) — a workaround for test deployments; on mainnet the chain is genuinely `eip155:1`, so `chainIdHexToCaip2(evmTxParams.chainId)` matches and no hardcode is needed. Use whichever the Vault uses, or the recomputed `requestId` won't match.
 - `keyVersion` — `KEY_VERSION` (`1`).
 - `path` — what you passed in. The Vault prefixes with `${vaultId},${requester},` for deposits and uses `${vaultId},root` internally for the sweep address.
 - `algo`, `dest`, `params` — opaque; hashed into `requestId` only. Pass the same values you used on the request (in-repo consumers use `"ECDSA"` / `"ethereum"` / `""`).
@@ -213,7 +213,7 @@ The TS implementation matches `signet-signer-v1/daml/RequestId.daml` byte-for-by
 
 `uploadDar`, `allocateParty`, `createUser`, `createUserWithRights`, `grantUserRights`, `listUserRights`, `createContract`, `exerciseChoice`, `getActiveContracts`, `getInterfaceContracts`, `getDisclosedContract`, `getLedgerEnd`. All typed against the generated OpenAPI schema, except `uploadDar`, which posts the raw DAR bytes via plain `fetch`.
 
-`options.getToken` — optional async bearer-token provider; when set, every request carries `Authorization: Bearer <token>`. A local `dpm sandbox` needs no auth; a hosted participant (e.g. DevNet) does.
+`options.getToken` — optional async bearer-token provider; when set, every request carries `Authorization: Bearer <token>`. A local `dpm sandbox` needs no auth; a hosted participant does.
 
 Pure helpers: `canActAsRight(party)`, `canReadAsRight(party)`.
 

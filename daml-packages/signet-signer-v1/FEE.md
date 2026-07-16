@@ -54,8 +54,8 @@ the `FeeCollectorContext` that `canton-sig`'s `getFeeCollectorContext` builds:
 
 A requester-side client consumes the response as a `FeeCollectorContext` and continues with
 `selectInputHoldings` → `getTransferFactoryForFee` → `assembleFeeChoiceArgs` /
-`collectFeeDisclosures`. A client that itself holds fee-admin read authority (single-party
-DevNet) can call `getFeeCollectorContext` directly instead — same shape.
+`collectFeeDisclosures`. A client that itself holds fee-admin read authority (a single-party
+development setup) can call `getFeeCollectorContext` directly instead — same shape.
 
 ## Fee contracts and what may change
 
@@ -179,7 +179,7 @@ fail-closed gap is seconds rather than up to one reprice interval.
 **Scope (baseline change, frozen API untouched).** Confined to `signet-fee-amulet`. This package has no
 prior _released_ version to upgrade from (see _Upgradability rules_: upgrade checking is off until a
 v-next exists), so this is a **baseline** definition, not an SCU; networks that already vetted `0.0.1`
-(DevNet/TestNet) pick it up via redeploy. Add
+pick it up via redeploy. Add
 `transferFactoryCid : ContractId TransferFactory` to `FeePriceConfig` as a **mandatory** field (not
 `Optional`): mandatory forces every bootstrap and every `UpdateFee` reprice to set it, so the type
 system guarantees a config can never be posted without a pinned factory — there is no `None` branch that
