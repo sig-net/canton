@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Public read-only endpoint serving Canton disclosed-contract blobs (Signer, Vault, CC fee) for MPC-vault integrators, split per network (/api/devnet, /api/testnet).",
+  "description": "Public read-only endpoint serving Canton disclosed-contract blobs (Signer, Vault, CC fee) for MPC-vault integrators (/api/testnet; non-public networks under /api/internal/<network>).",
   "scripts": {
     "check:types": "tsc --noEmit",
     "dev": "vercel dev",

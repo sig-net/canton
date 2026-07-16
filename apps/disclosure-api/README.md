@@ -4,12 +4,7 @@ Public, read-only HTTP endpoint that serves Canton disclosed-contract blobs an M
 
 ## Endpoints
 
-| Route                                              | Network |
-| -------------------------------------------------- | ------- |
-| `GET /api/devnet` (also `GET /` and `GET /devnet`) | DevNet  |
-| `GET /api/testnet` (also `GET /testnet`)           | Testnet |
-
-`/` stays on DevNet for back-compat (the historical `https://disclosure-api.vercel.app` root). Each route returns:
+`GET /api/testnet` — the explicit per-network path is the only URL (no aliases; the bare root 404s). The route returns:
 
 ```jsonc
 {
@@ -33,7 +28,7 @@ Public + cached (`Cache-Control: public, s-maxage=300, stale-while-revalidate=86
 
 ## Data source
 
-Each route serves `disclosures.<network>.ts` in this package — a generated module (`export default { signer, vault, fee }`) written by `test/src/scripts/deploy.ts` (step 6) on each (re)deploy of that network. `api/[network].ts` imports both modules and selects by the path segment. Vercel's Node builder compiles and bundles them into the function (a plain module import is reliably traced and bundled; a JSON import is not). So the endpoint needs **no ledger access, no OIDC secrets, and no Daml-generated code at runtime** — it just returns committed, ledger-public payloads. The modules are committed, so the served data is reviewable in git.
+Each route serves `disclosures.<network>.ts` in this package — a generated module (`export default { signer, vault, fee }`) written by `test/src/scripts/deploy.ts` (step 6) on each (re)deploy of that network. Each route imports its network's module and selects by the `[network]` path segment. Vercel's Node builder compiles and bundles them into the function (a plain module import is reliably traced and bundled; a JSON import is not). So the endpoint needs **no ledger access, no OIDC secrets, and no Daml-generated code at runtime** — it just returns committed, ledger-public payloads. The modules are committed, so the served data is reviewable in git.
 
 > **Production note:** `fee` is a convenience snapshot. The `FeePriceConfig` reprices (`UpdateFee`), so a static snapshot of it goes stale, and a non-stakeholder requester can't read it from the ledger anyway. In production this endpoint must resolve the fee **live** (read as `sigNetworkFA` via `getFeeCollectorContext`) rather than serve the baked-in module. The `Signer`/`Vault` are stable singletons, so serving those from the snapshot stays correct.
 
@@ -47,7 +42,6 @@ vercel link
 
 # 1. after a contract (re)deploy, regenerate that network's data module
 #    (writes apps/disclosure-api/disclosures.<network>.ts) and commit it
-DEPLOY_CONFIRM=1 pnpm --filter canton-mpc-test exec tsx src/scripts/deploy.ts                                   # devnet (default)
 CANTON_NETWORK=testnet DOTENV_CONFIG_PATH=.env.testnet DEPLOY_CONFIRM=1 \
   pnpm --filter canton-mpc-test exec tsx src/scripts/deploy.ts                                                  # testnet
 
@@ -55,7 +49,7 @@ CANTON_NETWORK=testnet DOTENV_CONFIG_PATH=.env.testnet DEPLOY_CONFIRM=1 \
 pnpm run deploy:prod   # = vercel build --prod && vercel deploy --prebuilt --prod
 ```
 
-Both `disclosures.devnet.ts` and `disclosures.testnet.ts` must exist at build time — they're committed, so a fresh checkout builds. After a (re)deploy, commit the regenerated module so the served data stays reviewable in git.
+Every network's `disclosures.<network>.ts` module must exist at build time — they're committed, so a fresh checkout builds. After a (re)deploy, commit the regenerated module so the served data stays reviewable in git.
 
 - **No environment variables / secrets** required.
 - `pnpm dev` runs `vercel dev` for a local server; `pnpm run check:types` type-checks.
