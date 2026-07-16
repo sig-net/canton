@@ -84,8 +84,7 @@ export interface CantonClientOptions {
    *
    * Called once per request, so cache the token inside the provider — e.g. an
    * OIDC client-credentials token reused until shortly before it expires. A
-   * local `dpm sandbox` needs no auth (omit this); a hosted participant such as
-   * Canton DevNet does.
+   * local `dpm sandbox` needs no auth (omit this); a hosted participant does.
    */
   getToken?: () => Promise<string | null | undefined>;
 }

@@ -209,7 +209,7 @@ template Vault
 
         -- Vault namespaces its key derivation via path so two vaults sharing the same operator set still get distinct EVM keys
         let fullPath = vaultId <> "," <> partyToText requester <> "," <> path
-        -- TEST MODE (single-EVM DevNet): the MPC only accepts caip2 "eip155:1"
+        -- TEST MODE (single-EVM test deployment): the MPC only accepts caip2 "eip155:1"
         -- (hardcoded table in mpc primitives `from_caip2_chain_id`; anything else →
         -- UnknownCaip2Id, rejected before the outcome watcher is registered). We advertise
         -- "eip155:1" while the tx keeps its own chainId (e.g. Sepolia 11155111): the
