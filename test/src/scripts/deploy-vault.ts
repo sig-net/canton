@@ -45,7 +45,7 @@ const CONFIRM = process.env.DEPLOY_CONFIRM === "1";
 // Fresh package name signet-vault-v1 (sidesteps any SCU conflict with the legacy
 // daml-vault / daml-vault-poc 0.0.1 packages still vetted on DevNet, whose schemas
 // differ). Keeps mpcResponseVerifyKey + eip155:1.
-const LOCAL_PKG_ID = "7078d1d1b66d15451613184450105816e651f04061df97419aa2107fcd9ea6ca";
+const LOCAL_PKG_ID = "2894ac2db725f029ab9cbcf60aae59a4e09ad63bc76e7db2d11b85fa93193ed9";
 const VAULT_TEMPLATE_ID = `${LOCAL_PKG_ID}:Erc20Vault:Vault`;
 const DAR_PATH = fileURLToPath(
   new URL(
