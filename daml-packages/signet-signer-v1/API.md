@@ -204,4 +204,4 @@ requestId = keccak256(
 responseHash = keccak256(requestId ‖ serializedOutput)
 ```
 
-Every implementation that mirrors this off-Canton must produce byte-identical hashes — verify cross-language with golden vectors before integrating. The Daml vectors live in `signet-signer-v1-tests/daml/TestRequestId.daml`; the DevNet e2e asserts the TS mirror against the on-ledger `requestId` at runtime.
+Every implementation that mirrors this off-Canton must produce byte-identical hashes — verify cross-language with golden vectors before integrating. The Daml vectors live in `signet-signer-v1-tests/daml/TestRequestId.daml`; the live e2e asserts the TS mirror against the on-ledger `requestId` at runtime.

@@ -1,6 +1,6 @@
 # Testing Locally
 
-This repo's TypeScript test (`test/src/test/devnet-e2e.test.ts`) runs against the **Canton DevNet + the MPC** — it does not spin anything up locally.
+This repo's live TypeScript e2e test (in `test/src/test/`) runs against a **live Canton network + the MPC** — it does not spin anything up locally.
 
 If you want a fully local loop instead — an **MPC node running against a local Canton sandbox** — that harness already exists in the Rust MPC repo (`git@github.com:sig-net/mpc`). It is the right place for local iteration because it wires up everything for you.
 

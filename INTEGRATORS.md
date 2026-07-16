@@ -1,6 +1,6 @@
 # Integrators: running your consumer from your own Canton node
 
-This is the deployment guide for teams building a Daml consumer package on top of [`signet-signer-v1`](daml-packages/signet-signer-v1/README.md) (with [`signet-vault-v1`](daml-packages/signet-vault-v1/README.md) as the worked example). It assumes you operate your own Canton node and know Daml — it covers only what is specific to integrating the Signer, up to a working deployment on DevNet/TestNet.
+This is the deployment guide for teams building a Daml consumer package on top of [`signet-signer-v1`](daml-packages/signet-signer-v1/README.md) (with [`signet-vault-v1`](daml-packages/signet-vault-v1/README.md) as the worked example). It assumes you operate your own Canton node and know Daml — it covers only what is specific to integrating the Signer, up to a working deployment on TestNet.
 
 **Integrators run their own node.** Sig-net does not host integrator parties, users, or DARs on its participant — your parties live on your participant, your DARs are vetted there, and your clients talk to your own JSON Ledger API with your own auth. The two nodes meet on the shared synchronizer: disclosed contracts carry the Signer (and the fee contracts it charges through) to your submissions, and Canton delivers the MPC's evidence events to your participant because your parties are informees on them.
 
@@ -21,17 +21,17 @@ This is the deployment guide for teams building a Daml consumer package on top o
 
 Per-network values that are already public:
 
-| Input                                                   | DevNet                                                                                                      | Testnet                                         |
-| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
-| Disclosure endpoint (`{ network, signer, vault, fee }`) | `https://disclosure-api.vercel.app` (alias of `/api/devnet`)                                                | `https://disclosure-api.vercel.app/api/testnet` |
-| MPC root public key                                     | signet.js [`ROOT_PUBLIC_KEYS.TESTNET_DEV`](https://github.com/sig-net/signet.js/blob/main/src/constants.ts) | signet.js `ROOT_PUBLIC_KEYS.TESTNET`            |
-| Destination-chain `caip2Id` the MPC accepts             | `eip155:1` only (see the [`RequestSignature` field table](daml-packages/signet-signer-v1/API.md#signer))    | same                                            |
+| Input                                                   | Testnet                                                                                                  |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Disclosure endpoint (`{ network, signer, vault, fee }`) | `https://disclosure-api.vercel.app/api/testnet`                                                          |
+| MPC root public key                                     | signet.js [`ROOT_PUBLIC_KEYS.TESTNET`](https://github.com/sig-net/signet.js/blob/main/src/constants.ts)  |
+| Destination-chain `caip2Id` the MPC accepts             | `eip155:1` only (see the [`RequestSignature` field table](daml-packages/signet-signer-v1/API.md#signer)) |
 
 Root keys are NAJ-encoded (`secp256k1:…`); convert with signet.js `normalizeToUncompressedPubKey` before deriving addresses or the response-verification key.
 
 ## 1. Build your consumer against the release DARs — never rebuild ours from source
 
-Download the DARs from the [GitHub release assets](https://github.com/sig-net/canton/releases) (currently `v0.0.1`) and verify them against `SHA256SUMS.txt`. These are **byte-exact the packages vetted on DevNet and testnet**; the release notes list the package-id of each.
+Download the DARs from the [GitHub release assets](https://github.com/sig-net/canton/releases) (currently `v0.0.1`) and verify them against `SHA256SUMS.txt`. These are **byte-exact the packages vetted on TestNet**; the release notes list the package-id of each.
 
 > **Why this matters:** a Daml package-id is a hash of the package source. If you rebuild `signet-signer-v1` from a clone of this repo at any commit that differs from the release, you get a _different_ package-id under the _same_ `name`+`version` — and Canton refuses to vet two same-name+version packages with different package-ids (`KNOWN_PACKAGE_VERSION`). Your consumer DAR embeds the dependency's package-id at compile time, so building against the wrong bytes produces a package that can never be vetted next to the deployed one. Always compile against the downloaded release assets.
 
@@ -75,13 +75,13 @@ Follow the [`canton-sig` README](ts-packages/canton-sig/README.md) — with thes
 - **Ledger + auth are yours.** `CantonClient` points at your participant's JSON API; `options.getToken` uses your IdP. Your requester parties and their ledger users live on your participant — sig-net is not involved.
 - **Disclosed contracts come from the disclosure endpoint.** It serves everything your submissions must attach: the `Signer` envelope, the fee-contract envelopes, and the `Vault` envelope if you use ours. Attach them on your request choice (`[yourContractDisclosure, signerDisclosure, ...feeDisclosures]`); your claim/completion choice needs only your own contract's disclosure. Parties are not disclosed — a party is just an identifier, and the normal flow needs no sig-net party ids at all.
 - **Disclosures of your contracts to your users** (who can't read them from their own ACS) are yours to serve — [`apps/disclosure-api`](apps/disclosure-api/README.md) is a copyable pattern.
-- **The signature fee rides along automatically.** Your request choice forwards three fee arguments to `RequestSignature`; fill them from what the disclosure endpoint serves, as [`test/src/test/devnet-e2e.test.ts`](test/src/test/devnet-e2e.test.ts) does.
+- **The signature fee rides along automatically.** Your request choice forwards three fee arguments to `RequestSignature`; fill them from what the disclosure endpoint serves, as this repo's live e2e test ([`test/src/test/`](test/src/test/)) does.
 
-## 4. Prove it on DevNet, then TestNet
+## 4. Prove it on TestNet
 
-Deploy your DAR and run your real flow — request → MPC signature → broadcast → verified outcome → your domain effect — against the live Signer and MPC on DevNet first, then TestNet. These networks exist for exactly this: exercising them is expected and harmless, and a full loop completing there **is** the integration test — if it works there, it works. Move to MainNet once the same flow is green on both.
+Deploy your DAR and run your real flow — request → MPC signature → broadcast → verified outcome → your domain effect — against the live Signer and MPC on TestNet. The network exists for exactly this: exercising it is expected and harmless, and a full loop completing there **is** the integration test — if it works there, it works. Move to MainNet once the same flow is green.
 
-How you test is up to you; as reference implementations to model your own checks on, this repo has [`test/src/test/devnet-e2e.test.ts`](test/src/test/devnet-e2e.test.ts) (the canonical client-side deposit/withdraw loop against DevNet) and [`test/src/scripts/cn-quickstart-integrator-check.ts`](test/src/scripts/cn-quickstart-integrator-check.ts) (the cross-participant flow we validate ourselves against a local [CN Quickstart](SETUP.md) stack).
+How you test is up to you; as reference implementations to model your own checks on, this repo has the live e2e test in [`test/src/test/`](test/src/test/) (the canonical client-side deposit/withdraw loop against a live network) and [`test/src/scripts/cn-quickstart-integrator-check.ts`](test/src/scripts/cn-quickstart-integrator-check.ts) (the cross-participant flow we validate ourselves against a local [CN Quickstart](SETUP.md) stack).
 
 ## Checklist
 
@@ -90,7 +90,7 @@ How you test is up to you; as reference implementations to model your own checks
 - [ ] Consumer DAR + `signet-fee-amulet` (+ `signet-vault-v1` if used) vetted on your participant
 - [ ] Disclosure endpoint reachable
 - [ ] Client wired: your auth, disclosure fetching and attachment
-- [ ] Full loop green on DevNet, then TestNet
+- [ ] Full loop green on TestNet
 - [ ] [Security checklist](daml-packages/signet-signer-v1/SECURITY.md) reviewed for your consumer templates
 
 ## Troubleshooting

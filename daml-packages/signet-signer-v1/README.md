@@ -4,7 +4,7 @@ Generic MPC signing infrastructure for Canton. The Signer is a small set of Daml
 
 These templates are the Canton implementation of the standard Signet [Sign Bidirectional Flow](https://docs.sig.network/architecture/sign-bidirectional) — see that page for the chain-agnostic lifecycle phases; it links onward to the detailed docs for the serialization schemas, `0xdeadbeef` error handling, key derivation, and response-key model. This README documents only the Canton-specific API and integrator obligations.
 
-For a worked consumer example see [`signet-vault-v1`](../signet-vault-v1/README.md). For an executable end-to-end run-through of deposit, claim, and withdrawal (run as a pure client against a pre-provisioned party and the deployed Vault) see `test/src/test/devnet-e2e.test.ts` in this repo.
+For a worked consumer example see [`signet-vault-v1`](../signet-vault-v1/README.md). For an executable end-to-end run-through of deposit, claim, and withdrawal (run as a pure client against a pre-provisioned party and the deployed Vault) see the live e2e test (in `test/src/test/`) in this repo.
 
 ## How this fits together
 
@@ -70,7 +70,7 @@ import Splice.Api.Token.MetadataV1 (ExtraArgs)
 
 You'll be given two things to integrate against.
 
-**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `RequestSignature`). It carries no secrets — treat it as config. You can't read the `Signer` from your own ACS, so obtain its envelope from the operator's disclosure endpoint. That endpoint is `apps/disclosure-api`, served live per network: DevNet at `https://disclosure-api.vercel.app` (alias of `/api/devnet`), testnet at `https://disclosure-api.vercel.app/api/testnet`. `await fetch(<network endpoint>)` returns the disclosures as `{ network, signer, vault, fee }`, where the `signer` field is the `Signer` envelope below (illustrative values — fetch the live one rather than hard-coding it):
+**1. The `Signer` disclosed-contract envelope.** Attach it under `disclosedContracts` on every command that exercises the `Signer` (e.g. `RequestSignature`). It carries no secrets — treat it as config. You can't read the `Signer` from your own ACS, so obtain its envelope from the operator's disclosure endpoint. That endpoint is `apps/disclosure-api`, served live per network — e.g. testnet at `https://disclosure-api.vercel.app/api/testnet`. `await fetch(<network endpoint>)` returns the disclosures as `{ network, signer, vault, fee }`, where the `signer` field is the `Signer` envelope below (illustrative values — fetch the live one rather than hard-coding it):
 
 ```json
 {
