@@ -1,12 +1,13 @@
 /**
- * Public, read-only endpoint serving Canton disclosed-contract blobs, split per network.
+ * Public, read-only endpoint serving Canton disclosed-contract blobs.
  *
- *   GET /api/<network>   →   { network, signer, vault, fee }   for network ∈ {devnet, testnet}
+ *   GET /api/<network>   →   { network, signer, vault, fee }   for public networks (testnet)
  *
- * Back-compat + pretty aliases live in vercel.json:
- *   /            → /api/devnet   (the historical root URL keeps serving DevNet)
- *   /devnet      → /api/devnet
- *   /testnet     → /api/testnet
+ * Routing is purely Vercel's filesystem convention — no rewrites or aliases exist, so the
+ * explicit per-network path is the only URL (the bare root deliberately 404s).
+ *
+ * Non-public networks are not served here — they live under `api/internal/` and are not
+ * part of the integrator surface.
  *
  * An MPC-vault integrator attaches these to a `RequestDeposit` / `RequestWithdrawal`
  * submission so a requester who cannot read the `sigNetwork`-only `Signer` from its own
@@ -27,61 +28,7 @@
  * rather than serve the baked-in module. `Signer`/`Vault` are stable singletons, so serving
  * those from the snapshot stays correct.
  */
-import devnet from "../disclosures.devnet.js";
 import testnet from "../disclosures.testnet.js";
+import { makeDisclosureHandler } from "../lib/handler.js";
 
-// Precompute each network's response body once (payloads are tiny + immutable per deploy).
-const BODIES: Record<string, string> = {
-  devnet: JSON.stringify({ network: "devnet", ...devnet }),
-  testnet: JSON.stringify({ network: "testnet", ...testnet }),
-};
-
-// Minimal structural types for the Node-style Vercel handler (keeps this package
-// dependency-free; the real VercelRequest/VercelResponse satisfy them). `query.network`
-// is the `[network]` path segment, populated by Vercel for dynamic API routes.
-interface HandlerRequest {
-  method?: string;
-  query?: Record<string, string | string[] | undefined>;
-}
-interface HandlerResponse {
-  statusCode: number;
-  setHeader(name: string, value: string): void;
-  end(chunk?: string): void;
-}
-
-export default function handler(req: HandlerRequest, res: HandlerResponse): void {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  // Disclosures change only on a (re)deploy; cache hard and let a redeploy purge it.
-  res.setHeader("Cache-Control", "public, s-maxage=300, stale-while-revalidate=86400");
-
-  if (req.method === "OPTIONS") {
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
-  if (req.method !== undefined && req.method !== "GET") {
-    res.statusCode = 405;
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.end(JSON.stringify({ error: "Method Not Allowed" }));
-    return;
-  }
-
-  const raw = req.query?.network;
-  const network = Array.isArray(raw) ? raw[0] : raw;
-  const body = network ? BODIES[network] : undefined;
-
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
-  if (!body) {
-    res.statusCode = 404;
-    res.end(
-      JSON.stringify({
-        error: `Unknown network '${network ?? ""}'`,
-        networks: Object.keys(BODIES),
-      }),
-    );
-    return;
-  }
-  res.statusCode = 200;
-  res.end(body);
-}
+export default makeDisclosureHandler({ testnet });
