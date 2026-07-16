@@ -1,8 +1,8 @@
 /**
- * Canton DevNet e2e — ERC-20 Vault deposit + withdraw against the MPC.
+ * Canton live e2e — ERC-20 Vault deposit + withdraw against the MPC.
  *
  * We run as a pure client against the live network:
- *   - the Canton DevNet JSON Ledger API (OIDC client-credentials auth → Bearer JWT);
+ *   - the Canton JSON Ledger API (OIDC client-credentials auth → Bearer JWT);
  *   - the Vault + Signer — the Signer injected from its configured disclosure
  *     envelope (.env), the way a requester (who can't read the sigNetwork-only Signer)
  *     is handed it; the Vault disclosed by its configured contract id;
@@ -17,7 +17,7 @@
  * on-chain — while computing the requestId with caip2 `eip155:1` to match the Vault, then
  * broadcast to Sepolia (MPC_CANTON_ETH_RPC_URL), which the MPC's `eip155:1` indexer watches.
  *
- * THIS MUTATES THE LIVE LEDGER AND SPENDS DEVNET FUNDS. It only runs when the
+ * THIS MUTATES THE LIVE LEDGER AND SPENDS FUNDS. It only runs when the
  * MPC_CANTON_* + funding env is present AND MPC_CANTON_LIVE_MUTATE=1; otherwise it
  * is skipped.
  */
@@ -72,7 +72,7 @@ import type {
   RespondBidirectionalEvent,
 } from "canton-sig";
 
-// ── Template references (package-name refs; Canton resolves to the vetted DevNet
+// ── Template references (package-name refs; Canton resolves to the vetted on-ledger
 //    package, which may differ from the locally-generated package hash) ──────────
 const SIGNATURE_RESPONDED_T = "#signet-signer-v1:Signer:SignatureRespondedEvent";
 const RESPOND_BIDIRECTIONAL_T = "#signet-signer-v1:Signer:RespondBidirectionalEvent";
@@ -107,7 +107,7 @@ const SPEC_TIMEOUT_MS = SIGN_TIMEOUT_MS + BROADCAST_DELAY_MS + RESPOND_TIMEOUT_M
 
 // ── Env ───────────────────────────────────────────────────────────────────────--
 const EnvSchema = z.object({
-  // Canton DevNet JSON Ledger API + OIDC client-credentials auth.
+  // Canton JSON Ledger API + OIDC client-credentials auth.
   MPC_CANTON_JSON_API_URL: z.url(),
   MPC_CANTON_OIDC_TOKEN_URL: z.url(),
   MPC_CANTON_OIDC_CLIENT_ID: z.string().min(1),
@@ -115,11 +115,11 @@ const EnvSchema = z.object({
   MPC_CANTON_OIDC_AUDIENCE: z.string().min(1),
   MPC_CANTON_OIDC_SCOPE: z.string().optional(),
   MPC_CANTON_LEDGER_API_USER: z.string().min(1),
-  // On DevNet a single party is operators + requester + sigNetwork (the MPC's own party).
+  // In the single-party deployment one party is operators + requester + sigNetwork (the MPC's own party).
   MPC_CANTON_PARTY_ID: z.string().min(1),
   // Fee admin: the featured-app party that signs the fee infra (the
   // FeeCollectorRegistration, the collector, and the FeePriceConfig). Defaults
-  // to MPC_CANTON_PARTY_ID for the single-party DevNet setup.
+  // to MPC_CANTON_PARTY_ID for the single-party setup.
   MPC_CANTON_SIG_NETWORK_FA_PARTY_ID: z.string().min(1).optional(),
   // The deployed apps/disclosure-api endpoint. The e2e fetches the Signer + Vault
   // disclosures from it — the way a real integrator obtains the sigNetwork-only contracts
@@ -236,7 +236,7 @@ async function fetchEndpointDisclosures(
   return { signer: body.signer, vault: body.vault, fee: body.fee ?? [] };
 }
 
-// ── Shared DevNet context (populated in beforeAll) ───────────────────────────────
+// ── Shared live-network context (populated in beforeAll) ─────────────────────────
 let canton: CantonClient;
 let getAuthToken: () => Promise<string>;
 let party: string;
@@ -270,7 +270,7 @@ async function pollForContract(
   throw new Error(`Timed out waiting for ${label} (${timeoutMs / 1000}s)`);
 }
 
-/** Latest EIP-1559 gas params from the DevNet chain. */
+/** Latest EIP-1559 gas params from the EVM chain. */
 async function fetchGasParams(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
   const block = await ethPublicClient().getBlock({ blockTag: "latest" });
   const baseFee = block.baseFeePerGas ?? 1_000_000_000n;
@@ -287,7 +287,7 @@ async function erc20BalanceOf(address: Hex): Promise<bigint> {
   });
 }
 
-/** Top up `target` from the faucet on the DevNet chain: ETH for gas, ERC-20 up to `erc20Amount`. */
+/** Top up `target` from the faucet on the EVM chain: ETH for gas, ERC-20 up to `erc20Amount`. */
 async function fundFromFaucet(target: Hex, erc20Amount: bigint): Promise<void> {
   const account = privateKeyToAccount(env!.FAUCET_PRIVATE_KEY as Hex);
   const publicClient = ethPublicClient();
@@ -342,7 +342,7 @@ async function buildTransferParams(
 
 /**
  * Wait for the MPC's request signature, assert it was made with the key for
- * `expectedSigner`, then broadcast the reconstructed tx to the DevNet chain.
+ * `expectedSigner`, then broadcast the reconstructed tx to the EVM chain.
  * Returns the SignatureRespondedEvent cid.
  */
 async function signAndBroadcast(
@@ -377,7 +377,7 @@ async function signAndBroadcast(
 /**
  * Assemble the CC signature-fee inputs for one RequestDeposit / RequestWithdrawal.
  *
- * On DevNet a single party is requester = sigNetwork = feeReceiver — and, unless
+ * In the single-party deployment requester = sigNetwork = feeReceiver — and, unless
  * MPC_CANTON_SIG_NETWORK_FA_PARTY_ID says otherwise, also the fee admin — so the
  * sigNetworkFA-signed fee contracts are readable directly (the reader is their
  * stakeholder) and the fee transfer is a self-transfer settled via the party's
@@ -432,7 +432,7 @@ async function prepareFeeInputs(): Promise<{
       inputHoldingCids: selection.inputHoldingCids,
     },
     {
-      // DevNet's CC registry is the validator scan-proxy, gated by the same OIDC
+      // The network's CC registry is the validator scan-proxy, gated by the same OIDC
       // bearer as the ledger; getTransferFactoryForFee sends none by default.
       fetchImpl: async (input, init = {}) => {
         const headers = new Headers(init.headers);
@@ -483,7 +483,7 @@ async function submitVaultRequest(
 }
 
 // ── Specs ─────────────────────────────────────────────────────────────────────--
-describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
+describeIf("Canton live ERC-20 vault lifecycle", () => {
   let holdingCid: string | undefined;
 
   beforeAll(async () => {
@@ -506,7 +506,7 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
         `(signer ${signerDisclosure.contractId}, vault ${vaultContractId})`,
     );
 
-    // Read the Vault's args live (we're a stakeholder on DevNet) to drive key derivation.
+    // Read the Vault's args live (we're a stakeholder in the single-party setup) to drive key derivation.
     const vaults = await canton.getActiveContracts([party], VAULT_T);
     const vaultContract = vaults.find((c) => c.contractId === vaultContractId);
     if (!vaultContract) throw new Error("Configured Vault not visible to party");
@@ -531,11 +531,11 @@ describeIf("Canton DevNet ERC-20 vault lifecycle", () => {
   it(
     "deposits ERC-20 into the vault via the MPC",
     async () => {
-      const subPath = `devnet-e2e,${Date.now()}`; // unique → fresh deposit address (nonce 0)
+      const subPath = `live-e2e,${Date.now()}`; // unique → fresh deposit address (nonce 0)
       const fullPath = `${vaultId},${party},${subPath}`; // matches Vault: vaultId,<requester>,<path>
       const depositAddress = deriveDepositAddress(rootPubKey, predecessorId, fullPath);
 
-      // Fund the derived deposit address on the DevNet chain (ETH for gas + ERC-20 to deposit).
+      // Fund the derived deposit address on the EVM chain (ETH for gas + ERC-20 to deposit).
       await fundFromFaucet(depositAddress, DEPOSIT_AMOUNT);
 
       const evmTxParams = await buildTransferParams(depositAddress, vaultAddress, DEPOSIT_AMOUNT);
