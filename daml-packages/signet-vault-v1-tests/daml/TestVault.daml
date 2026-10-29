@@ -109,7 +109,7 @@ mkVaultFeeInfra sigNetworkFA = do
 mkDepositArgs : Party -> ContractId Signer -> ContractId FeeCollectorRegistration -> Text -> EvmType2TransactionParams -> RequestDeposit
 mkDepositArgs requester signerCid feeRegistrationCid path evmTxParams = RequestDeposit with
   requester; signerCid; path; evmTxParams
-  keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
+  keyVersion = 1; algo = "ECDSA"; dest = ""; params = ""
   outputDeserializationSchema = erc20BoolSchema
   respondSerializationSchema = erc20BoolSchema
   feeRegistrationCid; feeInputs = []; feeExtraArgs = noFeeExtras
@@ -117,7 +117,7 @@ mkDepositArgs requester signerCid feeRegistrationCid path evmTxParams = RequestD
 mkWithdrawalArgs : Party -> ContractId Signer -> ContractId FeeCollectorRegistration -> EvmType2TransactionParams -> BytesHex -> ContractId Erc20Holding -> RequestWithdrawal
 mkWithdrawalArgs requester signerCid feeRegistrationCid evmTxParams recipientAddress balanceCid = RequestWithdrawal with
   requester; signerCid; evmTxParams; recipientAddress; balanceCid
-  keyVersion = 1; algo = "ECDSA"; dest = "ethereum"; params = ""
+  keyVersion = 1; algo = "ECDSA"; dest = ""; params = ""
   outputDeserializationSchema = erc20BoolSchema
   respondSerializationSchema = erc20BoolSchema
   feeRegistrationCid; feeInputs = []; feeExtraArgs = noFeeExtras
@@ -219,7 +219,7 @@ mkSignEvent VaultEnv{operator, requester, sigNetwork, sigNetworkFA} evmTxParams 
       caip2Id = "eip155:11155111"
       keyVersion = 1
       path = "test-vault," <> partyToText requester <> ",fixture"
-      algo = "ECDSA"; dest = "ethereum"; params = ""
+      algo = "ECDSA"; dest = ""; params = ""
       outputDeserializationSchema = erc20BoolSchema
       respondSerializationSchema = erc20BoolSchema
 

@@ -129,7 +129,7 @@ nonconsuming choice MyDomainAction : (ContractId SignBidirectionalEvent, Contrac
       keyVersion = 1
       path = fullPath
       algo = "ECDSA"
-      dest = "ethereum"
+      dest = ""
       params = ""
       outputDeserializationSchema = "[{\"name\":\"\",\"type\":\"bool\"}]"
       respondSerializationSchema  = "[{\"name\":\"\",\"type\":\"bool\"}]"

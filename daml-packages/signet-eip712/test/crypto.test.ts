@@ -64,12 +64,12 @@ const VECTORS = {
   hashType2EthTransfer: "0x772a96f61e790006aea0170ce80be388d26f929ddaa670088946ee26b0103f92",
   hashType2AccessList: "0x1958cd3129ac47587cc671edcd0dbee65fa18bca4c97e6c959a30d15ba9994e9",
   hashType2ContractCreation: "0xea05c872b41f323538651c9661ebdc4404e4c934b548eb49c7f0ddbf6ba03667",
-  requestIdKv0: "0xc78bad85eb84c149611f8dbc20e179e2001f0b703b8199b1a31c8feec653301d",
-  requestIdKv1: "0xaf5de812ffd1408db82f32b543c1b92f973c4280d7456efa032c2ace9725e1e7",
-  requestIdKv256: "0xd790759b0f32e12a2dce289a8a9caba39bfa7804dc8f39efab9480909e029457",
-  requestIdEthTransfer: "0x10a0778a26f7eccfe5f3b987443ddf429a5cd246a5c0baf6c893fbdd0b66256c",
-  requestIdAccessList: "0xa8b7453df8b0739b5a8ceb121ed6ffcda2230e92e703e814ca842ef3604aaadc",
-  requestIdContractCreation: "0x79bf70f52ac4f67dcbfd2711bd72de792a899e4167fbdadba44bf6493d3b6ed6",
+  requestIdKv0: "0xf5ccd9142da123215ee6419c06fd7dedb3fe77a515ae0998f3c4397efa4e748f",
+  requestIdKv1: "0x1e1b53b750ae7f2252713086d05b36d86b25b74114a133719969f9a64ea845ac",
+  requestIdKv256: "0x45f4c7072806d03c5dd4978f35bc1a7fa811d11b8370a4183a48abe0acf32dda",
+  requestIdEthTransfer: "0x12d37b14663f777778974f58afc1ea7e97380bc940dccafac3fdeceb4d55eb3b",
+  requestIdAccessList: "0x9d7a4b23bb4f6de44b9b197ea2c98a040141ce674a411a4ba42f65a48e7666c9",
+  requestIdContractCreation: "0x9ab3037ae2a8114a78bf3c6f01d128c84a93260d6ce5247340a5423b4ac768b8",
   responseHash01: "0x0344a8df5db02fe0579ff283081b60d9e6f3956594facfc6ea2befd5890366f4",
   responseHashEmpty: "0x20ee8f1366f06926e9e8771d8fb9007a8537c8dfdb6a3f8c2cfd64db19d2ec90",
 };
@@ -112,7 +112,7 @@ describe("computeRequestId", () => {
         KEY_VERSION,
         PATH,
         "ECDSA",
-        "ethereum",
+        "",
         "",
       ),
     ).toBe(VECTORS.requestIdKv1);
@@ -126,7 +126,7 @@ describe("computeRequestId", () => {
       KEY_VERSION,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     expect(rid).toMatch(/^0x[0-9a-f]{64}$/);
@@ -140,7 +140,7 @@ describe("computeRequestId", () => {
       KEY_VERSION,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     const b = computeRequestId(
@@ -150,7 +150,7 @@ describe("computeRequestId", () => {
       KEY_VERSION,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     expect(a).toBe(b);
@@ -164,7 +164,7 @@ describe("computeRequestId", () => {
       KEY_VERSION,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     const b = computeRequestId(
@@ -174,7 +174,7 @@ describe("computeRequestId", () => {
       KEY_VERSION,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     expect(a).not.toBe(b);
@@ -188,7 +188,7 @@ describe("computeRequestId", () => {
       KEY_VERSION,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "params-a",
     );
     const b = computeRequestId(
@@ -198,7 +198,7 @@ describe("computeRequestId", () => {
       KEY_VERSION,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "params-b",
     );
     expect(a).not.toBe(b);
@@ -212,7 +212,7 @@ describe("computeRequestId", () => {
       1,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     const b = computeRequestId(
@@ -222,7 +222,7 @@ describe("computeRequestId", () => {
       256,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     expect(a).not.toBe(b);
@@ -239,7 +239,7 @@ describe("computeRequestId", () => {
         0,
         PATH,
         "ECDSA",
-        "ethereum",
+        "",
         "",
       ),
     ).toBe(VECTORS.requestIdKv0);
@@ -253,7 +253,7 @@ describe("computeRequestId", () => {
       1,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     const b = computeRequestId(
@@ -263,7 +263,7 @@ describe("computeRequestId", () => {
       1,
       PATH,
       "ECDSA",
-      "ethereum",
+      "",
       "",
     );
     expect(a).not.toBe(b);
@@ -279,7 +279,7 @@ describe("computeRequestId", () => {
         KEY_VERSION,
         PATH,
         "ECDSA",
-        "ethereum",
+        "",
         "",
       ),
     ).toBe(VECTORS.requestIdAccessList);
@@ -294,7 +294,7 @@ describe("computeRequestId", () => {
         KEY_VERSION,
         PATH,
         "ECDSA",
-        "ethereum",
+        "",
         "",
       ),
     ).toBe(VECTORS.requestIdContractCreation);
