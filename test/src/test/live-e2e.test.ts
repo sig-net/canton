@@ -89,7 +89,7 @@ const ERC20_TRANSFER_SELECTOR = "a9059cbb";
 const BOOL_SCHEMA = '[{"name":"","type":"bool"}]';
 const ABI_BOOL_TRUE = `${"0".repeat(63)}1`;
 const ALGO = "ECDSA";
-const DEST = "ethereum";
+const DEST = "";
 
 const POLL_INTERVAL_MS = 5_000;
 const SIGN_TIMEOUT_MS = 180_000; // wait for the MPC to threshold-sign

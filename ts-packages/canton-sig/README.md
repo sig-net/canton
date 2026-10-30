@@ -133,7 +133,7 @@ const depositTx = await canton.exerciseChoice(
     evmTxParams,
     keyVersion: 1,
     algo: "ECDSA",
-    dest: "ethereum",
+    dest: "",
     params: "",
     outputDeserializationSchema: '[{"name":"","type":"bool"}]',
     respondSerializationSchema: '[{"name":"","type":"bool"}]',
@@ -203,7 +203,7 @@ Canton-format hex is bare lowercase hex, no `0x` prefix; `""` represents empty b
 - `caip2Id` — must equal whatever the Vault used, **not** necessarily the signed chainId. The test-mode Vault hardcodes `"eip155:1"` while signing for Sepolia (`11155111`) — a workaround for test deployments; on mainnet the chain is genuinely `eip155:1`, so `chainIdHexToCaip2(evmTxParams.chainId)` matches and no hardcode is needed. Use whichever the Vault uses, or the recomputed `requestId` won't match.
 - `keyVersion` — `KEY_VERSION` (`1`).
 - `path` — what you passed in. The Vault prefixes with `${vaultId},${requester},` for deposits and uses `${vaultId},root` internally for the sweep address.
-- `algo`, `dest`, `params` — opaque; hashed into `requestId` only. Pass the same values you used on the request (in-repo consumers use `"ECDSA"` / `"ethereum"` / `""`).
+- `algo`, `dest`, `params` — opaque; hashed into `requestId` only. Pass the same values you used on the request (in-repo consumers use `"ECDSA"` / `""` / `""`).
 
 The TS implementation matches `signet-signer-v1/daml/RequestId.daml` byte-for-byte.
 

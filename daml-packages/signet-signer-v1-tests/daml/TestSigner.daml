@@ -83,7 +83,7 @@ mkRequestArgs operators requester feeRegistrationCid = RequestSignature with
   operators; requester
   txParams = EvmType2TxParams sampleEvmType2Params
   caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-  algo = "ECDSA"; dest = "ethereum"; params = ""
+  algo = "ECDSA"; dest = ""; params = ""
   outputDeserializationSchema = erc20BoolSchema
   respondSerializationSchema = erc20BoolSchema
   feeRegistrationCid
@@ -97,7 +97,7 @@ mkEventPayload operator requester sigNetwork sigNetworkFA = SignBidirectionalEve
   sender = computeOperatorsHash [partyToText operator]
   txParams = EvmType2TxParams sampleEvmType2Params
   caip2Id = "eip155:11155111"; keyVersion = 1; path = "test-path"
-  algo = "ECDSA"; dest = "ethereum"; params = ""
+  algo = "ECDSA"; dest = ""; params = ""
   outputDeserializationSchema = erc20BoolSchema
   respondSerializationSchema = erc20BoolSchema
 
@@ -317,7 +317,7 @@ testRequestSignatureHappyPath = do
   assertMsg "keyVersion"                 (e.keyVersion                 == 1)
   assertMsg "path"                       (e.path                       == "test-path")
   assertMsg "algo"                       (e.algo                       == "ECDSA")
-  assertMsg "dest"                       (e.dest                       == "ethereum")
+  assertMsg "dest"                       (e.dest                       == "")
   assertMsg "params"                     (e.params                     == "")
   assertMsg "outputDeserializationSchema" (e.outputDeserializationSchema == erc20BoolSchema)
   assertMsg "respondSerializationSchema"  (e.respondSerializationSchema  == erc20BoolSchema)

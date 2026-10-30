@@ -362,7 +362,7 @@ async function main() {
       evmTxParams,
       keyVersion: String(KEY_VERSION),
       algo: "ECDSA",
-      dest: "ethereum",
+      dest: "",
       params: "",
       outputDeserializationSchema: BOOL_SCHEMA,
       respondSerializationSchema: BOOL_SCHEMA,
@@ -387,7 +387,7 @@ async function main() {
     KEY_VERSION,
     fullPath,
     "ECDSA",
-    "ethereum",
+    "",
     "",
   );
   if (tsRequestId.slice(2) !== requestId)
